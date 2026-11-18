@@ -1,0 +1,28 @@
+Oninus Lactis NG 2.2
+
+The Papyrus scripts, the plugin, the squirt meshes and the textures come from Oninus
+Lactis by Orbus Ninus and Oninus Lactis NG 2.1, under their terms: free to use and
+build upon with attribution, no paid distribution.
+
+OninusLactis.dll and its source (src\, tools\) are by crajjjj, GNU General Public
+License version 3; see LICENSE (OninusLactis-LICENSE.txt in the mod archive).
+
+The DLL is built from Lacrima (https://github.com/crajjjj/lacrima, GPL-3.0), which
+contains code adapted from OStrands by LeonVanWinkle (Saint), also GPL-3.0, taken
+from OStrands 0.8.0 (https://gitlab.com/LilRicefield/ostrands):
+
+- src/fluid/*: the position-based fluid solver, skin lookup grid, clusters and
+  density-field surface, as adapted in Lacrima (a simulation frame that moves with a
+  bone, fluid at rest sleeps, front-face skin contact).
+- src/GeometryMath.h: the rope frame transport.
+- src/Body.cpp: the skin wrap (vertex decoding, skinning, the region test), widened
+  from Lacrima's face to every skinned mesh on the torso, with the nipple search
+  added.
+- src/Milk.cpp: Lacrima's Tears.cpp (the fluid rendering: blobs, ropes, drops; the
+  emission, sleep and trail logic), fed from the nipples, with one simulation frame
+  per breast bone. Its running-mascara code is still in the file and idle.
+- src/Hooks.cpp: the frame driver.
+- tools/nifkit.py and tools/make_milk.py: the NIF and DDS writers.
+
+vendor/SKSEMenuFramework/SKSEMenuFramework.h is the client header of SKSE Menu
+Framework, GPL-3.0; see vendor/SKSEMenuFramework/README.txt.

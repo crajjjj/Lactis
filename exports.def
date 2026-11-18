@@ -1,0 +1,3 @@
+LIBRARY	"OninusLactis"
+EXPORTS
+SKSEPlugin_Load

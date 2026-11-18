@@ -1,0 +1,3011 @@
+#include "Milk.h"
+
+// The fluid rendering here (clusters wrapped into blobs, linked runs posed as
+// ropes, drops squashed against the skin) is adapted from OStrands'
+// FluidManager.cpp by LeonVanWinkle (Saint), GPL-3.0. OStrands feeds it from
+// climax emitters and openings, in world space; Lactis feeds it from the tear
+// ducts, with one small simulation per eye that lives in the head bone's own
+// frame and whose nodes hang under that bone.
+
+namespace Lactis
+{
+	namespace
+	{
+		using Vec3 = Fluid::Vec3;
+
+		constexpr float       kUnitsPerMeter = 70.0f;
+		constexpr float       kBaseSpacing = 0.0035f;
+		constexpr float       kThreshold = 1.75f;
+		constexpr float       kBulkEnter = 3.0f;
+		constexpr float       kBulkLeave = 2.5f;
+		constexpr float       kCovered = 0.3f;
+		constexpr float       kSlotSpacing = 0.9f;
+		constexpr float       kLinkSpacing = 0.6f;
+		constexpr std::size_t kBlobMinimum = 6;
+		constexpr float       kSmoothing = 0.05f;
+		constexpr float       kStep = 1.0f / 120.0f;
+		constexpr int         kMaxSteps = 6;
+		constexpr std::size_t kMaxBlobs = 32;
+		constexpr std::size_t kMaxRopes = 32;
+		constexpr int         kClonesPerFrame = 2;
+		constexpr float       kStreak = 1.5f;
+		constexpr float       kStreakStart = 0.3f;
+		constexpr float       kMaxStretch = 3.0f;
+		constexpr float       kSquash = 0.45f;
+		constexpr float       kSkinCell = 0.03f;  // the skin lookup finds a patch within half of this: a vanilla head's cheek has 1 cm gaps
+		constexpr float       kSkinMargin = 0.06f;
+		constexpr float       kWatchMargin = 0.006f;  // metres around the tears where an expression moving the skin wakes them
+		constexpr float       kTipGrace = 0.15f;      // seconds off the skin after which a piece of the bead no longer ends the trail
+		constexpr float       kWellSpeed = 0.02f;
+		// Variety, all scaled by [tears] variety.
+		constexpr float       kStartJitter = 0.006f;   // metres either side of the duct a tear may start, at variety 1
+		constexpr float       kBigTearChance = 0.15f;  // chance a tear is a big one, at variety 1
+		constexpr float       kBigTear = 1.6f;
+		constexpr float       kFollowChance = 0.3f;    // chance another tear follows right behind, at variety 1
+		constexpr float       kLengthJitter = 0.5f;    // share of [look] mascara_length a streak may run shorter or longer, at variety 1
+		constexpr float       kFollowWait = 0.25f;     // ... after this share of the usual wait
+		constexpr float       kFallSpeed = 0.25f;
+		// A particle must be off every surface this long before falling counts: free
+		// fall passes kFallSpeed within 30 ms, before a released tear can land.
+		constexpr float kFallGrace = 0.2f;
+		constexpr float       kRamp = 1.5f;
+		constexpr float       kMarkerRadius = 1.5f;  // units; big on purpose, it is a "do the meshes show at all" probe
+		constexpr float       kMarkerOpacity = 0.4f;  // the markers are tear blobs in the tears' material: while they show, it is at least this opaque
+		constexpr float       kGravity = 9.81f;
+		constexpr float       kMinScale = 0.05f;
+		// Sleeping tears wake when the head has tilted this far (cos 15 degrees) from
+		// where they settled: gravity pulls them a new way.
+		constexpr float kTiltWake = 0.966f;
+		constexpr auto  kStatusEvery = 250ms;
+		constexpr auto  kStatusWanted = 60s;
+
+		constexpr float      kWipeFade = 0.3f;
+		constexpr float      kWipeRest = 2.0f;
+		constexpr float      kPalmRadius = 1.1f;
+		constexpr float      kFingerRadius = 0.45f;
+		constexpr float      kTipExtension = 0.7f;
+		constexpr float      kMaxHandSpeed = 500.0f;  // world units per second, relative to the head; faster is a teleport
+		constexpr RE::FormID kWipeIdle = 0x000977EC;  // IdleWipeBrow, Skyrim.esm
+
+		constexpr const char* kHeadBone = Body::kHeadBone;
+
+		// Per side: the hand, then the thumb, index, middle and ring fingers, three
+		// bones each from base to tip.
+		constexpr std::size_t kSideBones = 13;
+		constexpr std::array  kHandBones{
+			"NPC L Hand [LHnd]",
+			"NPC L Finger00 [LF00]", "NPC L Finger01 [LF01]", "NPC L Finger02 [LF02]",
+			"NPC L Finger10 [LF10]", "NPC L Finger11 [LF11]", "NPC L Finger12 [LF12]",
+			"NPC L Finger20 [LF20]", "NPC L Finger21 [LF21]", "NPC L Finger22 [LF22]",
+			"NPC L Finger30 [LF30]", "NPC L Finger31 [LF31]", "NPC L Finger32 [LF32]",
+			"NPC R Hand [RHnd]",
+			"NPC R Finger00 [RF00]", "NPC R Finger01 [RF01]", "NPC R Finger02 [RF02]",
+			"NPC R Finger10 [RF10]", "NPC R Finger11 [RF11]", "NPC R Finger12 [RF12]",
+			"NPC R Finger20 [RF20]", "NPC R Finger21 [RF21]", "NPC R Finger22 [RF22]",
+			"NPC R Finger30 [RF30]", "NPC R Finger31 [RF31]", "NPC R Finger32 [RF32]",
+		};
+
+		constexpr const char* kBlobPath = "OninusLactis\\milk_blob.nif";
+		constexpr const char* kRopePath = "OninusLactis\\milk_rope.nif";
+		constexpr const char* kStainPath = "OninusLactis\\milk_stain.nif";
+
+		// Running mascara. A mark is a flat ribbon lying just above the skin, its thin
+		// side along the skin's normal, so it shows from every angle. (Sinking a round
+		// rope into the skin instead made the marks come and go as the head turned, and
+		// dip out of sight between their points on the curve of the cheek.) Its points
+		// are laid densely along the skin for the same reason.
+		constexpr float       kStainRadius = 0.0019f;   // metres at width 1: a streak about 4 mm wide at half strength, its soft edges past that
+		constexpr float       kStainLift = 0.0005f;     // how far above the skin a mark lies (the posed skin can lag the rendered one by a frame on an expression change)
+		constexpr float       kStainSpacing = 0.006f;   // metres between the points of a streak along the skin
+		constexpr float       kSmudgeRadius = 0.002f;   // the band under the lid: 4 mm tall at half strength
+		constexpr float       kSmudgeReach = 0.005f;    // metres from a lid point a hand smears the band
+		constexpr float       kCornerRun = 0.9f;        // how far past its corner points a smudge ribbon runs, in lid-point spacings
+		// No mark belongs far from the eye. A point past these is left out of its ribbon
+		// and logged once per cheek, so a ribbon can never stretch off the face.
+		constexpr float       kLidReach = 0.05f;        // metres from the tears' start a point of the band under the lid may lie
+		constexpr float       kLidStep = 0.015f;        // metres between a lid point and the one in the row above
+		constexpr float       kStreakReach = 0.25f;     // metres from the tears' start a point of a streak may lie
+		// A mark's radius is where it is at half strength. The stain texture eases from
+		// full on the ribbon's centre line out to nothing at its edge, reaching half at
+		// this share of the half-width (make_tears.py STAIN_CORE), so a ribbon is posed
+		// wider than its radius by 1 / kStainHalf: the soft edge lies past the radius, and
+		// rows tiled edge to edge meet at half strength each instead of leaving a gap.
+		constexpr float       kStainHalf = 0.5f;
+		constexpr float       kPoolReach = 0.008f;      // metres along the lid from where a tear started that the mascara spreads below the band
+		constexpr float       kSmudgeFirst = 0.45f;     // how much the first tear leaves under the lid, at full mascara
+		constexpr float       kSmudgeMore = 0.2f;       // ... and each one after
+		constexpr float       kStainFade = 0.3f;        // the last share of its life a mark spends fading
+		constexpr float       kSmearWidth = 2.6f;       // a smeared mark ends up this much wider
+		constexpr float       kSmearDrag = 0.012f;      // metres a wipe drags a mark along the skin
+		constexpr float       kSmearMax = 0.03f;        // and at most this far in all
+		constexpr float       kSmearSpeed = 0.05f;      // metres per second a mark moves while it smears
+		constexpr float       kSmearMinSpeed = 0.02f;   // a hand slower than this along the skin smears outward instead
+		constexpr float       kFaceReach = 0.02f;       // metres: how far from the posed face a mark may be and still be put back on it
+		constexpr float       kSmearLife = 0.35f;       // a smeared mark keeps at most this share of its lifetime
+		constexpr std::size_t kMaxStainRuns = 16;       // streaks per cheek; the oldest goes past this
+		constexpr std::size_t kMaxStains = 400;         // points per cheek
+		constexpr std::uint32_t kBeadOrder = 0x7FFFFFFF; // where the bead came to rest: the end of its streak
+
+		struct MeshNames
+		{
+			RE::BSFixedString blobShape{ "BlobShape" };
+			RE::BSFixedString ropeShape{ "RopeShape" };
+			RE::BSFixedString stainShape{ "StainShape" };
+
+			static const MeshNames& Get()
+			{
+				static const MeshNames names;
+				return names;
+			}
+		};
+
+		Vec3         ToVec(const RE::NiPoint3& a_point) { return { a_point.x, a_point.y, a_point.z }; }
+		RE::NiPoint3 ToPoint(Vec3 a_vec) { return { a_vec.x, a_vec.y, a_vec.z }; }
+
+		RE::NiMatrix3 Rotation(const GeometryMath::Frame& a_frame)
+		{
+			const auto& [x, y, z] = a_frame;
+			RE::NiMatrix3 m;
+			m.entry[0][0] = x.x; m.entry[1][0] = x.y; m.entry[2][0] = x.z;
+			m.entry[0][1] = y.x; m.entry[1][1] = y.y; m.entry[2][1] = y.z;
+			m.entry[0][2] = z.x; m.entry[1][2] = z.y; m.entry[2][2] = z.z;
+			return m;
+		}
+
+		RE::NiMatrix3 ArcRotation(Vec3 a_from, Vec3 a_to)
+		{
+			RE::NiMatrix3 m;
+			const float   c = Fluid::Dot(a_from, a_to);
+			if (c < -0.999f) {
+				Vec3 axis = std::abs(a_from.x) < 0.9f ? Vec3{ 1.0f, 0.0f, 0.0f } : Vec3{ 0.0f, 1.0f, 0.0f };
+				axis = Fluid::Normalize(axis - a_from * Fluid::Dot(axis, a_from), { 0.0f, 0.0f, 1.0f });
+				const float a[3]{ axis.x, axis.y, axis.z };
+				for (int r = 0; r < 3; ++r) {
+					for (int col = 0; col < 3; ++col) {
+						m.entry[r][col] = 2.0f * a[r] * a[col] - (r == col ? 1.0f : 0.0f);
+					}
+				}
+				return m;
+			}
+			const Vec3  v = Fluid::Cross(a_from, a_to);
+			const float k = 1.0f / (1.0f + c);
+			m.entry[0][0] = 1.0f - k * (v.y * v.y + v.z * v.z);
+			m.entry[0][1] = -v.z + k * v.x * v.y;
+			m.entry[0][2] = v.y + k * v.x * v.z;
+			m.entry[1][0] = v.z + k * v.x * v.y;
+			m.entry[1][1] = 1.0f - k * (v.x * v.x + v.z * v.z);
+			m.entry[1][2] = -v.x + k * v.y * v.z;
+			m.entry[2][0] = -v.y + k * v.x * v.z;
+			m.entry[2][1] = v.x + k * v.y * v.z;
+			m.entry[2][2] = 1.0f - k * (v.x * v.x + v.y * v.y);
+			return m;
+		}
+
+		Vec3 Stretch(Vec3 a_value, Vec3 a_axis, float a_factor)
+		{
+			const float side = 1.0f / std::sqrt(a_factor);
+			return a_value * side + a_axis * (Fluid::Dot(a_value, a_axis) * (a_factor - side));
+		}
+
+		// The simulation metre is a_scale world metres (the head bone's scale), so
+		// gravity scales inversely to stay 9.81 m/s^2 in the world.
+		Fluid::Parameters ParametersOf(const Settings& a_settings, float a_scale, Vec3 a_down)
+		{
+			return { 4, a_settings.cohesion, a_settings.viscosity, kGravity / a_scale, a_down, a_settings.stretch, a_settings.friction,
+				a_settings.stickiness, a_settings.cling };
+		}
+
+		std::string Clean(std::string a_text)
+		{
+			std::ranges::replace(a_text, '%', ' ');
+			return a_text;
+		}
+
+		// a_streams: the crier's own count; 0 takes the setting.
+		Body::Placement PlacementOf(const Settings& a_settings, int a_streams = 0)
+		{
+			return { a_streams > 0 ? a_streams : a_settings.streams };
+		}
+
+		float SegmentDistance(Vec3 a_point, Vec3 a_from, Vec3 a_to)
+		{
+			const Vec3  span = a_to - a_from;
+			const float length = Fluid::LengthSquared(span);
+			const float t = length > 1e-12f ? std::clamp(Fluid::Dot(a_point - a_from, span) / length, 0.0f, 1.0f) : 0.0f;
+			return Fluid::Length(a_point - (a_from + span * t));
+		}
+
+		// The point on the skin under a_point (a particle rides a little above it),
+		// a_depth metres below the surface; a_point itself when no skin is near. The
+		// skin's normal there in a_normal.
+		Vec3 OntoSkin(const Fluid::Skin& a_skin, Vec3 a_point, float a_depth, Vec3* a_normal = nullptr)
+		{
+			const auto&       patches = a_skin.Patches();
+			const std::size_t k = a_skin.Nearest(a_point);
+			if (k == Fluid::kNone || k >= patches.size()) {
+				return a_point;
+			}
+			const auto& patch = patches[k];
+			if (a_normal) {
+				*a_normal = patch.normal;
+			}
+			const float height = Fluid::Dot(a_point - patch.position, patch.normal);
+			return a_point - patch.normal * (height + a_depth);
+		}
+
+		std::string NameOf(RE::Actor* a_actor)
+		{
+			const char* name = a_actor ? a_actor->GetDisplayFullName() : nullptr;
+			return Clean(name && *name ? name : "someone");
+		}
+	}
+
+	Milk& Milk::Get()
+	{
+		static Milk tears;
+		return tears;
+	}
+
+	// ------------------------------------------------------------------ requests
+
+	void Milk::Cry(RE::ActorHandle a_actor, float a_intensity, float a_seconds, int a_streams, float a_mascara)
+	{
+		if (!a_actor) {
+			return;
+		}
+		const float intensity = std::isfinite(a_intensity) ? std::clamp(a_intensity, 0.0f, 1.0f) : 0.6f;
+		const float seconds = std::isfinite(a_seconds) ? a_seconds : 0.0f;
+		if (!Enabled()) {
+			return;
+		}
+		Request request{ Request::Kind::kCry, a_actor, intensity, seconds };
+		request.streams = std::clamp(a_streams, 0, static_cast<int>(Body::kMaxStreams));
+		request.mascara = std::isfinite(a_mascara) ? std::min(a_mascara, 1.0f) : -1.0f;
+		std::scoped_lock guard(_lock);
+		_pending.push_back(request);
+		auto& state = _states[a_actor.native_handle()];
+		state.crying = intensity > 0.0f;
+		state.intensity = intensity;
+		state.timeLeft = intensity > 0.0f ? (seconds > 0.0f ? seconds : -1.0f) : 0.0f;
+		state.streams = request.streams;
+		state.mascara = request.mascara;
+	}
+
+	void Milk::Stop(RE::ActorHandle a_actor, bool a_wipe)
+	{
+		if (!a_actor) {
+			return;
+		}
+		std::scoped_lock guard(_lock);
+		_pending.push_back({ Request::Kind::kStop, a_actor, 0.0f, 0.0f, -1, a_wipe });
+		if (auto it = _states.find(a_actor.native_handle()); it != _states.end()) {
+			it->second = {};
+		}
+	}
+
+	void Milk::Shed(RE::ActorHandle a_actor, int a_eye)
+	{
+		if (!a_actor) {
+			return;
+		}
+		if (!Enabled()) {
+			return;
+		}
+		std::scoped_lock guard(_lock);
+		_pending.push_back({ Request::Kind::kShed, a_actor, 0.0f, 0.0f, a_eye });
+	}
+
+	void Milk::Wipe(RE::ActorHandle a_actor)
+	{
+		if (!a_actor) {
+			return;
+		}
+		std::scoped_lock guard(_lock);
+		_pending.push_back({ Request::Kind::kWipe, a_actor });
+	}
+
+	void Milk::WipeAll()
+	{
+		std::scoped_lock guard(_lock);
+		_pending.push_back({ Request::Kind::kWipeAll });
+	}
+
+	void Milk::CryNearby(float a_radius, float a_intensity, float a_seconds)
+	{
+		if (!Enabled()) {
+			return;
+		}
+		Request request{ Request::Kind::kNearby };
+		request.intensity = std::isfinite(a_intensity) ? std::clamp(a_intensity, 0.0f, 1.0f) : 0.6f;
+		request.seconds = std::isfinite(a_seconds) ? a_seconds : 0.0f;
+		request.radius = std::isfinite(a_radius) ? std::max(a_radius, 0.0f) : 0.0f;
+		std::scoped_lock guard(_lock);
+		_pending.push_back(request);
+	}
+
+	void Milk::SetMascara(RE::ActorHandle a_actor, float a_strength)
+	{
+		if (!a_actor) {
+			return;
+		}
+		Request request{ Request::Kind::kMascara, a_actor };
+		request.intensity = std::isfinite(a_strength) ? std::min(a_strength, 1.0f) : -1.0f;
+		std::scoped_lock guard(_lock);
+		_pending.push_back(request);
+	}
+
+	Milk::Override Milk::OverrideOf(std::uint32_t a_actor) const
+	{
+		const auto it = _overrides.find(a_actor);
+		return it != _overrides.end() ? it->second : Override{};
+	}
+
+	Milk::State Milk::Query(RE::ActorHandle a_actor) const
+	{
+		std::scoped_lock guard(_lock);
+		const auto       it = _states.find(a_actor.native_handle());
+		return it != _states.end() ? it->second : State{};
+	}
+
+	std::size_t Milk::CryingCount() const
+	{
+		std::scoped_lock guard(_lock);
+		return static_cast<std::size_t>(std::ranges::count_if(_states, [](const auto& a_entry) { return a_entry.second.crying; }));
+	}
+
+	std::string Milk::Status(RE::ActorHandle a_actor, bool a_log)
+	{
+		if (!a_actor) {
+			return "No actor.";
+		}
+		std::scoped_lock guard(_lock);
+		_wanted[a_actor.native_handle()] = std::chrono::steady_clock::now();
+		const auto it = _statuses.find(a_actor.native_handle());
+		if (it == _statuses.end()) {
+			return "Reading this actor; run the command again in a moment.";
+		}
+		// The same line goes to Lactis.log, so a report can carry it as text instead
+		// of a screenshot of the console. Only on the command: the menu's Test page
+		// asks every frame (0.2.2 logged a line per frame while it was open).
+		if (a_log) {
+			logger::info("status: {}", it->second);
+		}
+		return it->second;
+	}
+
+	// ---------------------------------------------------------------- lifecycle
+
+	void Milk::Reset()
+	{
+		{
+			std::scoped_lock guard(_lock);
+			_pending.clear();
+			_states.clear();
+			_statuses.clear();
+			_wanted.clear();
+		}
+		for (auto& [handle, crier] : _criers) {
+			for (auto& cheek : crier->cheeks) {
+				Release(cheek);
+			}
+		}
+		_criers.clear();
+		_order.clear();
+		_overrides.clear();
+		_spareBlobs.clear();
+		_spareRopes.clear();
+		_spareStains.clear();
+	}
+
+	void Milk::SendEvent(const char* a_name, RE::ActorHandle a_actor, float a_value)
+	{
+		auto* source = SKSE::GetModCallbackEventSource();
+		const auto actor = a_actor.get();
+		if (!source || !actor) {
+			return;
+		}
+		SKSE::ModCallbackEvent event{ RE::BSFixedString(a_name), RE::BSFixedString(""), a_value, actor.get() };
+		source->SendEvent(&event);
+	}
+
+	bool Milk::Enabled()
+	{
+		auto guard = Settings::Lock();
+		return Settings::Get().enabled;
+	}
+
+	Milk::Crier* Milk::CrierFor(RE::ActorHandle a_actor, const Settings& a_settings, bool a_create, bool a_evict)
+	{
+		const auto key = a_actor.native_handle();
+		if (auto it = _criers.find(key); it != _criers.end()) {
+			return it->second.get();
+		}
+		if (!a_create) {
+			return nullptr;
+		}
+		const auto actor = a_actor.get();
+		if (!actor || !actor->Get3D(false)) {
+			return nullptr;
+		}
+		if (!a_evict && _order.size() >= static_cast<std::size_t>(a_settings.maxActors)) {
+			return nullptr;
+		}
+		while (_order.size() >= static_cast<std::size_t>(a_settings.maxActors)) {
+			const auto oldest = _order.front();
+			_order.erase(_order.begin());
+			if (auto it = _criers.find(oldest); it != _criers.end()) {
+				if (it->second->crying) {
+					SendEvent("OLactis.LeakStop", it->second->actor, 0.0f);
+				}
+				for (auto& cheek : it->second->cheeks) {
+					Release(cheek);
+				}
+				_criers.erase(it);
+			}
+		}
+		auto crier = std::make_unique<Crier>();
+		crier->actor = a_actor;
+		for (auto& cheek : crier->cheeks) {
+			cheek.id = ++_nextId;
+		}
+		_order.push_back(key);
+		return _criers.emplace(key, std::move(crier)).first->second.get();
+	}
+
+	void Milk::StartCrying(Crier& a_crier, float a_intensity, float a_seconds, int a_streams, float a_mascara, const Settings& a_settings)
+	{
+		std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+		const bool                            started = !a_crier.crying;
+		a_crier.callStreams = a_streams;
+		a_crier.callMascara = a_mascara;
+		a_crier.statusLogged = false;
+		a_crier.target = a_intensity;
+		a_crier.forever = a_seconds <= 0.0f;
+		a_crier.timeLeft = a_crier.forever ? -1.0f : a_seconds;
+		a_crier.crying = true;
+		if (started) {
+			const std::size_t only = unit(_rng) < 0.5f ? Body::kLeft : Body::kRight;
+			for (std::size_t e = 0; e < Body::kEyes; ++e) {
+				auto& cheek = a_crier.cheeks[e];
+				cheek.sheds = a_settings.bothEyes || e == only;
+				if (!cheek.welling) {
+					cheek.wait = 0.2f + 1.2f * unit(_rng);
+				}
+			}
+			SendEvent("OLactis.LeakStart", a_crier.actor, a_intensity);
+		}
+	}
+
+	void Milk::StopCrying(Crier& a_crier)
+	{
+		if (a_crier.crying) {
+			SendEvent("OLactis.LeakStop", a_crier.actor, 0.0f);
+		}
+		a_crier.crying = false;
+		a_crier.target = 0.0f;
+		a_crier.timeLeft = 0.0f;
+		a_crier.forever = false;
+	}
+
+	void Milk::Apply(const Request& a_request, const Settings& a_settings)
+	{
+		switch (a_request.kind) {
+		case Request::Kind::kCry:
+			if (a_request.intensity <= 0.0f) {
+				if (auto* crier = CrierFor(a_request.actor, a_settings, false)) {
+					StopCrying(*crier);
+				}
+			} else if (auto* crier = CrierFor(a_request.actor, a_settings, true)) {
+				StartCrying(*crier, a_request.intensity, a_request.seconds, a_request.streams, a_request.mascara, a_settings);
+			}
+			break;
+		case Request::Kind::kStop:
+			if (auto* crier = CrierFor(a_request.actor, a_settings, false)) {
+				StopCrying(*crier);
+				if (a_request.wipe) {
+					for (auto& cheek : crier->cheeks) {
+						Clear(cheek);
+					}
+				}
+			}
+			break;
+		case Request::Kind::kShed:
+			if (auto* crier = CrierFor(a_request.actor, a_settings, true)) {
+				std::uniform_int_distribution<int> coin(0, 1);
+				const int                          eye = a_request.eye >= 0 && a_request.eye <= 2 ? a_request.eye : coin(_rng);
+				for (std::size_t e = 0; e < Body::kEyes; ++e) {
+					if (eye == 2 || static_cast<std::size_t>(eye) == e) {
+						++crier->cheeks[e].queued;
+					}
+				}
+			}
+			break;
+		case Request::Kind::kWipe:
+			if (auto* crier = CrierFor(a_request.actor, a_settings, false)) {
+				for (auto& cheek : crier->cheeks) {
+					Clear(cheek);
+				}
+			}
+			break;
+		case Request::Kind::kWipeAll:
+			for (auto& [key, crier] : _criers) {
+				for (auto& cheek : crier->cheeks) {
+					Clear(cheek);
+				}
+			}
+			break;
+		case Request::Kind::kHandWipe:
+			if (auto* crier = CrierFor(a_request.actor, a_settings, false)) {
+				DryFace(*crier);
+			}
+			break;
+		case Request::Kind::kNearby:
+			{
+				auto* player = RE::PlayerCharacter::GetSingleton();
+				auto* lists = RE::ProcessLists::GetSingleton();
+				if (!player || !lists || a_request.intensity <= 0.0f) {
+					break;
+				}
+				const auto  center = player->GetPosition();
+				std::size_t started = 0;
+				std::size_t skipped = 0;
+				for (const auto& handle : lists->highActorHandles) {
+					const auto actor = handle.get();
+					if (!actor || actor->IsDead() || !actor->Get3D(false) || actor->GetPosition().GetDistance(center) > a_request.radius) {
+						continue;
+					}
+					if (!Body::Of(actor.get(), PlacementOf(a_settings), nullptr)) {
+						continue;
+					}
+					if (auto* crier = CrierFor(handle, a_settings, true, false)) {
+						StartCrying(*crier, a_request.intensity, a_request.seconds, 0, -1.0f, a_settings);
+						++started;
+					} else {
+						++skipped;
+					}
+				}
+				logger::info("{} nearby actor(s) started leaking{}", started,
+					skipped ? std::format("; {} more had no free slot ([leak] max_actors)", skipped) : std::string{});
+			}
+			break;
+		case Request::Kind::kMascara:
+			{
+				const auto key = a_request.actor.native_handle();
+				if (a_request.intensity < 0.0f) {
+					_overrides.erase(key);
+				} else {
+					_overrides[key] = Override{ a_request.intensity };
+				}
+			}
+			break;
+		}
+	}
+
+	bool Milk::Idle(const Crier& a_crier) const
+	{
+		return !a_crier.crying && !a_crier.watched && a_crier.wipeArm <= 0.0f && std::ranges::all_of(a_crier.cheeks, [](const Cheek& a_cheek) {
+			return a_cheek.particles.empty() && !HasMascara(a_cheek) && !a_cheek.welling && a_cheek.queued == 0;
+		});
+	}
+
+	// -------------------------------------------------------------- frame update
+
+	void Milk::Update(float a_delta, bool a_paused)
+	{
+		const Settings       settings = Settings::Snapshot();
+		std::vector<Request> requests;
+		{
+			std::scoped_lock guard(_lock);
+			requests.swap(_pending);
+		}
+		if (!settings.enabled) {
+			for (auto& [key, crier] : _criers) {
+				if (crier->crying) {
+					SendEvent("OLactis.LeakStop", crier->actor, 0.0f);
+				}
+				for (auto& cheek : crier->cheeks) {
+					Release(cheek);
+				}
+			}
+			_criers.clear();
+			_order.clear();
+			{
+				std::scoped_lock guard(_lock);
+				_states.clear();
+			}
+			RefreshStatus(settings);
+			return;
+		}
+		for (const auto& request : requests) {
+			Apply(request, settings);
+		}
+
+		RE::ActorHandle watch;
+		if (settings.showDucts) {
+			const auto selected = RE::Console::GetSelectedRef();
+			auto*      actor = selected ? selected->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				actor = RE::PlayerCharacter::GetSingleton();
+			}
+			if (actor && actor->Get3D(false)) {
+				watch = actor->GetHandle();
+				CrierFor(watch, settings, true, false);
+			}
+		}
+		for (auto& [key, crier] : _criers) {
+			crier->watched = watch && crier->actor == watch;
+		}
+
+		if (a_paused || a_delta <= 0.0f) {
+			Publish();
+			RefreshStatus(settings);
+			return;
+		}
+		a_delta = std::min(a_delta, 0.05f);
+		_cloneBudget = kClonesPerFrame;
+
+		for (auto it = _criers.begin(); it != _criers.end();) {
+			auto&      crier = *it->second;
+			const auto actor = crier.actor.get();
+			auto*      root = actor ? actor->Get3D(false) : nullptr;
+			auto*      cell = actor ? actor->GetParentCell() : nullptr;
+			if (!root || !cell || !cell->IsAttached()) {
+				if (crier.crying) {
+					SendEvent("OLactis.LeakStop", crier.actor, 0.0f);
+				}
+				for (auto& cheek : crier.cheeks) {
+					Release(cheek);
+				}
+				std::erase(_order, it->first);
+				it = _criers.erase(it);
+				continue;
+			}
+
+			if (crier.crying && !crier.forever) {
+				crier.timeLeft -= a_delta;
+				if (crier.timeLeft <= 0.0f) {
+					StopCrying(crier);
+				}
+			}
+			{
+				const auto over = OverrideOf(it->first);
+				crier.streams = std::clamp(crier.callStreams > 0 ? crier.callStreams : settings.streams, 1, static_cast<int>(Body::kMaxStreams));
+				// this cry's own mascara, else the actor's, else the player's setting
+				const float mascara = crier.callMascara >= 0.0f ? crier.callMascara : (over.mascara >= 0.0f ? over.mascara : settings.mascara);
+				crier.mascara = std::clamp(mascara, 0.0f, 1.0f);
+			}
+			const auto placement = PlacementOf(settings, crier.streams);
+			const float goal = crier.crying ? crier.target : 0.0f;
+			const float step = a_delta / kRamp;
+			crier.intensity = crier.intensity < goal ? std::min(goal, crier.intensity + step) : std::max(goal, crier.intensity - step);
+			// Between tears a cheek only counts down; the face is read when there is
+			// fluid to simulate, a tear to start, a marker to draw or a gesture to watch.
+			bool busy = crier.watched || crier.wipeArm > 0.0f;
+			for (auto& cheek : crier.cheeks) {
+				const bool due = crier.crying && cheek.sheds && crier.intensity > 0.01f;
+				if (!cheek.welling && cheek.queued == 0 && due) {
+					cheek.wait -= a_delta;
+				}
+				busy = busy || !cheek.particles.empty() || HasMascara(cheek) || cheek.welling || cheek.queued > 0 || (due && cheek.wait <= 0.0f);
+			}
+			if (!busy) {
+				for (auto& cheek : crier.cheeks) {
+					if (cheek.root) {
+						Release(cheek);
+					}
+				}
+				if (Idle(crier)) {
+					std::erase(_order, it->first);
+					it = _criers.erase(it);
+				} else {
+					++it;
+				}
+				continue;
+			}
+
+			Bones(crier, root);
+			Locate(crier, actor.get(), root);
+			const bool frozen = Frozen(root, settings);
+			if (frozen != crier.frozen) {
+				crier.frozen = frozen;
+				for (auto& cheek : crier.cheeks) {
+					cheek.dirty = true;
+				}
+			}
+			if (frozen) {
+				// Out of sight: the fluid stays where it is on the body and the trails
+				// still dry up.
+				for (std::size_t e = 0; e < Body::kEyes; ++e) {
+					crier.hands[e].clear();
+					crier.handPrevious[e].clear();
+					auto& cheek = crier.cheeks[e];
+					cheek.capsules.clear();
+					Expire(cheek, crier.frames[e], settings, a_delta, crier.mascara);
+					if (cheek.particles.empty() && !HasMascara(cheek) && cheek.root) {
+						Release(cheek);
+					} else if (cheek.root) {
+						// Under the cell node nothing hides the fluid with the actor (first
+						// person) or carries it along; Attach shows it again.
+						cheek.root->SetAppCulled(true);
+					}
+				}
+				if (Idle(crier)) {
+					std::erase(_order, it->first);
+					it = _criers.erase(it);
+					continue;
+				}
+				++it;
+				continue;
+			}
+
+			auto region = Bounds(crier, true, kSkinMargin);
+			const std::array<std::optional<Body::Region>, Body::kEyes> under{ Bounds(crier, false, kWatchMargin, 0), Bounds(crier, false, kWatchMargin, 1) };
+			const std::array<const Body::Region*, Body::kEyes>         watching{ under[0] ? &*under[0] : nullptr, under[1] ? &*under[1] : nullptr };
+			auto                              view = Body::Of(actor.get(), placement, region ? &*region : nullptr, watching);
+			std::array<Spots, Body::kEyes>    spots{};
+			std::array<LidSpots, Body::kEyes> lids{};
+			if (view) {
+				for (std::size_t e = 0; e < Body::kEyes; ++e) {
+					for (std::size_t s = 0; s < Body::kMaxDucts; ++s) {
+						if (view->ducts[e][s].valid) {
+							spots[e][s] = SpotOf(crier.frames[e], view->ducts[e][s]);
+						}
+					}
+				}
+			}
+			if (settings.hands) {
+				PoseHands(crier, a_delta);
+			} else {
+				for (std::size_t e = 0; e < Body::kEyes; ++e) {
+					crier.hands[e].clear();
+					crier.handPrevious[e].clear();
+				}
+			}
+			// Wake before the surface is final: fluid that wakes needs skin under it in
+			// the same step, and with all of it asleep only the nipples' surroundings
+			// were posed.
+			bool woke = false;
+			for (std::size_t e = 0; e < Body::kEyes; ++e) {
+				woke = Wake(crier.cheeks[e], crier.frames[e], view && view->moving[e], crier.hands[e]) || woke;
+			}
+			if (woke && view) {
+				region = Bounds(crier, true, kSkinMargin);
+				view = Body::Of(actor.get(), placement, region ? &*region : nullptr, watching);
+			}
+			for (std::size_t e = 0; e < Body::kEyes; ++e) {
+				auto&      cheek = crier.cheeks[e];
+				const bool any = std::ranges::any_of(spots[e], [](const std::optional<Spot>& a_spot) { return a_spot.has_value(); });
+				if (!Prepare(cheek, settings, crier.frames[e].scale)) {
+					continue;
+				}
+				if (any) {
+					Emit(crier, cheek, spots[e], settings, a_delta);
+				} else if (cheek.welling || cheek.queued > 0) {
+					std::erase_if(cheek.anchors, [&](const Fluid::Anchor& a_anchor) { return a_anchor.owner == cheek.id; });
+					cheek.welling = false;
+					cheek.left = 0;
+					cheek.queued = 0;
+					cheek.dirty = true;
+				}
+				try {
+					Simulate(cheek, crier.frames[e], view, crier.hands[e], settings, a_delta, crier.mascara);
+					Expire(cheek, crier.frames[e], settings, a_delta, crier.mascara);
+				} catch (const std::exception& error) {
+					logger::error("{}: milk on one breast cleared: {}", NameOf(actor.get()), error.what());
+					Clear(cheek);
+				}
+				const bool marker = crier.watched && any;
+				if (cheek.particles.empty() && !HasMascara(cheek) && !marker) {
+					if (cheek.root) {
+						Release(cheek);
+					}
+					continue;
+				}
+				const Mount mount{ settings.mountWorld, &crier.frames[e] };
+				if (Attach(cheek, crier.anchors[e].get(), root, mount.world)) {
+					Draw(cheek, mount, settings, spots[e], lids[e], marker);
+				}
+			}
+
+			if (Idle(crier)) {
+				for (auto& cheek : crier.cheeks) {
+					Release(cheek);
+				}
+				std::erase(_order, it->first);
+				it = _criers.erase(it);
+				continue;
+			}
+			++it;
+		}
+
+		Publish();
+		RefreshStatus(settings);
+
+		// With the detailed log on, the status line (what tears status prints, head
+		// geometry included) goes to the log by itself: once as soon as a crying starts,
+		// the head read by then, and every 10 s while anyone cries or is watched.
+		if (settings.debugLog) {
+			_statTime += a_delta;
+			const bool tick = _statTime >= 10.0f;
+			if (tick) {
+				_statTime = 0.0f;
+			}
+			for (auto& [key, crier] : _criers) {
+				if ((!crier->crying && !crier->watched) || (!tick && crier->statusLogged)) {
+					continue;
+				}
+				crier->statusLogged = true;
+				const auto actor = crier->actor.get();
+				logger::info("{}", Describe(actor.get(), crier.get(), settings));
+			}
+		}
+	}
+
+	void Milk::Publish()
+	{
+		std::scoped_lock guard(_lock);
+		std::unordered_set<std::uint32_t> pending;
+		for (const auto& request : _pending) {
+			pending.insert(request.actor.native_handle());
+		}
+		std::erase_if(_states, [&](const auto& a_entry) { return !_criers.contains(a_entry.first) && !pending.contains(a_entry.first); });
+		for (const auto& [key, crier] : _criers) {
+			auto& state = _states[key];
+			state.crying = crier->crying;
+			state.intensity = crier->crying ? crier->target : 0.0f;
+			state.timeLeft = crier->crying ? (crier->forever ? -1.0f : std::max(crier->timeLeft, 0.0f)) : 0.0f;
+			state.streams = crier->callStreams;
+			state.mascara = crier->callMascara;
+		}
+	}
+
+	// --------------------------------------------------------------- head space
+
+	void Milk::Bones(Crier& a_crier, RE::NiAVObject* a_root)
+	{
+		if (a_crier.skeleton.get() == a_root && a_crier.handBones.size() == kHandBones.size()) {
+			return;
+		}
+		a_crier.skeleton.reset(a_root);
+		a_crier.handBones.clear();
+		for (const char* name : kHandBones) {
+			a_crier.handBones.emplace_back(a_root->GetObjectByName(name));
+		}
+		for (std::size_t e = 0; e < Body::kEyes; ++e) {
+			a_crier.hands[e].clear();
+			a_crier.handPrevious[e].clear();
+			a_crier.cheeks[e].rested = false;
+			a_crier.cheeks[e].dirty = true;
+		}
+	}
+
+	void Milk::Locate(Crier& a_crier, RE::Actor* a_actor, RE::NiAVObject* a_root)
+	{
+		const auto  bones = Body::Bones(a_actor);
+		RE::NiNode* torso = nullptr;
+		bool        looked = false;
+		for (std::size_t e = 0; e < Body::kEyes; ++e) {
+			RE::NiNode* anchor = bones[e] ? bones[e]->AsNode() : nullptr;
+			if (!anchor) {
+				if (!looked) {
+					looked = true;
+					auto* object = a_root->GetObjectByName(kHeadBone);
+					torso = object ? object->AsNode() : nullptr;
+					torso = torso ? torso : a_root->AsNode();
+				}
+				anchor = torso;
+			}
+			auto& cheek = a_crier.cheeks[e];
+			if (a_crier.anchors[e].get() != anchor) {
+				// A reloaded 3D has the same bone under a new node, and the fluid keeps its
+				// place in that bone's space. Another bone (an outfit weighted differently
+				// came on or off) is another space: what was simulated in the old one has
+				// no place in it.
+				const auto* before = a_crier.anchors[e].get();
+				if (before && anchor && before->name != anchor->name) {
+					Clear(cheek);
+				}
+				if (Settings::Snapshot().debugLog && anchor) {
+					const char* name = anchor->name.c_str();
+					logger::info("{} breast: fluid frame on \"{}\", scale {:.3f}", e == Body::kLeft ? "left" : "right", name && *name ? name : "(unnamed)",
+						anchor->world.scale);
+				}
+				a_crier.anchors[e].reset(anchor);
+				cheek.rested = false;
+				cheek.dirty = true;
+			}
+			const RE::NiAVObject* source = anchor ? static_cast<const RE::NiAVObject*>(anchor) : a_root;
+			auto&                 frame = a_crier.frames[e];
+			frame.origin = source->world.translate;
+			frame.rotate = source->world.rotate;
+			frame.inverse = source->world.rotate.Transpose();
+			frame.scale = std::isfinite(source->world.scale) ? std::max(source->world.scale, kMinScale) : 1.0f;
+			frame.unit = kUnitsPerMeter * frame.scale;
+			frame.down = Fluid::Normalize(ToVec(frame.inverse * RE::NiPoint3{ 0.0f, 0.0f, -1.0f }), { 0.0f, 0.0f, -1.0f });
+		}
+	}
+
+	bool Milk::Frozen(RE::NiAVObject* a_root, const Settings& a_settings) const
+	{
+		if (a_root->GetAppCulled()) {
+			return true;
+		}
+		const auto* camera = RE::PlayerCamera::GetSingleton();
+		const auto* eye = camera ? camera->cameraRoot.get() : nullptr;
+		return eye && eye->world.translate.GetDistance(a_root->world.translate) > a_settings.maxDistance;
+	}
+
+	std::optional<Body::Region> Milk::Bounds(const Crier& a_crier, bool a_awakeOnly, float a_margin, int a_side) const
+	{
+		// Where the surface must be posed: around all the fluid, as long as any of it
+		// is awake. Sleeping fluid does not collide, so a body with only that needs no
+		// skin beyond the nipples' surroundings, which Body poses anyway. Each side's
+		// fluid lives in its own bone's frame, so each box goes to the world by itself.
+		bool         awake = false;
+		bool         any = false;
+		Body::Region region{};
+		for (std::size_t e = 0; e < Body::kEyes; ++e) {
+			if (a_side >= 0 && static_cast<std::size_t>(a_side) != e) {
+				continue;
+			}
+			const auto& cheek = a_crier.cheeks[e];
+			if (cheek.particles.empty()) {
+				continue;
+			}
+			Vec3 low = cheek.particles.front().position;
+			Vec3 high = low;
+			for (const auto& particle : cheek.particles) {
+				awake = awake || !particle.asleep;
+				low = { std::min(low.x, particle.position.x), std::min(low.y, particle.position.y), std::min(low.z, particle.position.z) };
+				high = { std::max(high.x, particle.position.x), std::max(high.y, particle.position.y), std::max(high.z, particle.position.z) };
+			}
+			low = low - Vec3{ a_margin, a_margin, a_margin };
+			high = high + Vec3{ a_margin, a_margin, a_margin };
+			for (int c = 0; c < 8; ++c) {
+				const Vec3         corner{ c & 1 ? high.x : low.x, c & 2 ? high.y : low.y, c & 4 ? high.z : low.z };
+				const RE::NiPoint3 p = ToWorld(a_crier.frames[e], corner);
+				if (!any) {
+					region = { p, p };
+					any = true;
+				} else {
+					region.low = { std::min(region.low.x, p.x), std::min(region.low.y, p.y), std::min(region.low.z, p.z) };
+					region.high = { std::max(region.high.x, p.x), std::max(region.high.y, p.y), std::max(region.high.z, p.z) };
+				}
+			}
+		}
+		if (!any || (a_awakeOnly && !awake)) {
+			return std::nullopt;
+		}
+		return region;
+	}
+
+	Milk::Spot Milk::SpotOf(const Frame& a_frame, const Body::Duct& a_duct)
+	{
+		return { ToLocal(a_frame, a_duct.point), ToLocalDirection(a_frame, a_duct.normal), ToLocalDirection(a_frame, a_duct.down) };
+	}
+
+	Vec3 Milk::LidPoint(const Spot& a_spot, float a_offset)
+	{
+		const Vec3 side = Fluid::Normalize(Fluid::Cross(a_spot.normal, a_spot.down), { 1.0f, 0.0f, 0.0f });
+		return a_spot.point + side * a_offset;
+	}
+
+	Vec3 Milk::ToLocal(const Frame& a_frame, const RE::NiPoint3& a_point)
+	{
+		return ToVec((a_frame.inverse * (a_point - a_frame.origin)) / a_frame.unit);
+	}
+
+	Vec3 Milk::ToLocalDirection(const Frame& a_frame, const RE::NiPoint3& a_direction)
+	{
+		return Fluid::Normalize(ToVec(a_frame.inverse * a_direction), { 0.0f, 0.0f, 1.0f });
+	}
+
+	RE::NiPoint3 Milk::ToWorld(const Frame& a_frame, Vec3 a_point)
+	{
+		return a_frame.origin + a_frame.rotate * (ToPoint(a_point) * a_frame.unit);
+	}
+
+	// Node-local units under the head bone, whose own scale supplies the rest.
+	RE::NiPoint3 Milk::ToBone(Vec3 a_point)
+	{
+		return ToPoint(a_point) * kUnitsPerMeter;
+	}
+
+	// -------------------------------------------------------------------- ducts
+
+	bool Milk::Prepare(Cheek& a_cheek, const Settings& a_settings, float a_scale)
+	{
+		// A simulation metre is the bone's scale in world metres, so a breast scaled
+		// up by its bone (node-scale inflation) would grow its drops with it; the
+		// spacing is taken back by that scale, in steps so a slow ramp does not
+		// rebuild the solver every frame.
+		const float scale = std::round(std::clamp(a_scale, 0.25f, 4.0f) * 20.0f) / 20.0f;
+		const float spacing = kBaseSpacing * a_settings.size / scale;
+		if (a_cheek.solver && a_cheek.spacing == spacing) {
+			return true;
+		}
+		try {
+			a_cheek.solver = std::make_unique<Fluid::Solver>(spacing, Fluid::Parameters{});
+			a_cheek.spacing = spacing;
+		} catch (const std::exception& error) {
+			logger::error("milk solver: {}", error.what());
+			return false;
+		}
+		return true;
+	}
+
+	void Milk::StartTear(Cheek& a_cheek, float a_strength, int a_streams, const Settings& a_settings)
+	{
+		std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+		// Variety: tears differ in size, now and then one is much bigger, and each starts
+		// a little to one side of its duct, so no two run down quite the same line.
+		const float variety = a_settings.variety;
+		const float spread = 0.25f + 0.35f * variety;
+		float       size = static_cast<float>(a_settings.drop) * (0.5f + 0.5f * a_strength) * (1.0f - spread + 2.0f * spread * unit(_rng));
+		if (unit(_rng) < kBigTearChance * variety) {
+			size *= kBigTear;
+		}
+		a_cheek.run = ++_nextRun;
+		// each tear picks one of the eye's streams
+		const int streams = std::clamp(a_streams, 1, static_cast<int>(Body::kMaxStreams));
+		a_cheek.stream = streams > 1 ? std::uniform_int_distribution<int>(0, streams - 1)(_rng) : 0;
+		// ... or, now and then, a corner of the eye
+		if (unit(_rng) < a_settings.cornerTears) {
+			a_cheek.stream = static_cast<int>(unit(_rng) < 0.5f ? Body::kInnerCorner : Body::kOuterCorner);
+		}
+		a_cheek.startOffset = (2.0f * unit(_rng) - 1.0f) * variety * kStartJitter;
+		a_cheek.reach = 1.0f + (2.0f * unit(_rng) - 1.0f) * variety * kLengthJitter;  // so the streaks of different tears end at different heights
+		a_cheek.left = std::max(2, static_cast<int>(std::lround(size)));
+		a_cheek.interval = a_settings.well / static_cast<float>(a_cheek.left);
+		a_cheek.slot = 0.0f;
+		a_cheek.hold = a_settings.hold * (0.6f + 0.8f * unit(_rng));
+		a_cheek.welling = true;
+	}
+
+	void Milk::Emit(Crier& a_crier, Cheek& a_cheek, const Spots& a_spots, const Settings& a_settings, float a_delta)
+	{
+		std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+		const bool                            started = !a_cheek.welling;
+		if (!a_cheek.welling) {
+			if (a_cheek.queued > 0) {
+				--a_cheek.queued;
+				StartTear(a_cheek, std::max(a_crier.intensity, 0.6f), a_crier.streams, a_settings);
+			} else if (a_crier.crying && a_cheek.sheds && a_crier.intensity > 0.01f && a_cheek.wait <= 0.0f) {
+				StartTear(a_cheek, a_crier.intensity, a_crier.streams, a_settings);
+			}
+			if (!a_cheek.welling) {
+				return;
+			}
+		}
+		// The duct of the stream this tear runs from, or another one that was found.
+		const Spot* chosen = a_spots[static_cast<std::size_t>(std::clamp(a_cheek.stream, 0, static_cast<int>(Body::kMaxDucts) - 1))] ?
+		                         &*a_spots[static_cast<std::size_t>(a_cheek.stream)] : nullptr;
+		for (const auto& candidate : a_spots) {
+			if (!chosen && candidate) {
+				chosen = &*candidate;
+			}
+		}
+		if (!chosen) {
+			return;
+		}
+		const Spot& a_spot = *chosen;
+		if (started) {
+			// the tear carries mascara out of the lashes: the band under the lid builds up
+			if (a_crier.mascara > 0.0f && a_settings.mascaraSmudge > 0.0f && !_meshes.stainFailed) {
+				auto&       smudge = a_cheek.smudge;
+				const float gain = (smudge.strength > 0.0f ? kSmudgeMore : kSmudgeFirst) * a_crier.mascara;
+				smudge.strength = std::min(1.0f, smudge.strength + gain);
+				smudge.lifetime = a_settings.mascaraLifetime;
+				smudge.life = smudge.lifetime;
+				a_cheek.dirty = true;
+			}
+			if (a_settings.debugLog) {
+				const auto& frame = a_crier.frames[&a_cheek == &a_crier.cheeks[Body::kRight] ? Body::kRight : Body::kLeft];
+				logger::info("{}: a drop of {} particles starts at bone-space ({:.3f}, {:.3f}, {:.3f}) m, normal ({:.2f}, {:.2f}, {:.2f}), down ({:.2f}, {:.2f}, {:.2f}); "
+				             "frame scale {:.3f}, unit {:.1f}, gravity down ({:.2f}, {:.2f}, {:.2f})",
+					NameOf(a_crier.actor.get().get()), a_cheek.left, a_spot.point.x, a_spot.point.y, a_spot.point.z, a_spot.normal.x, a_spot.normal.y,
+					a_spot.normal.z, a_spot.down.x, a_spot.down.y, a_spot.down.z, frame.scale, frame.unit, frame.down.x, frame.down.y, frame.down.z);
+				a_cheek.probe = true;
+			}
+		}
+
+		const float spacing = a_cheek.spacing;
+		const float lift = 0.6f * spacing;
+		const Vec3  side = Fluid::Normalize(Fluid::Cross(a_spot.normal, a_spot.down), { 1.0f, 0.0f, 0.0f });
+		const Vec3  seat = LidPoint(a_spot, a_cheek.startOffset) + a_spot.normal * lift;
+		a_cheek.seat = seat;
+		a_cheek.seatKnown = true;
+		auto&       particles = a_cheek.particles;
+		bool        born = false;
+		a_cheek.slot -= a_delta;
+		while (a_cheek.left > 0 && a_cheek.slot <= 0.0f) {
+			a_cheek.slot += a_cheek.interval;
+			--a_cheek.left;
+			if (particles.size() >= static_cast<std::size_t>(a_settings.maxParticles)) {
+				continue;
+			}
+			const Vec3      jitter = (side * (unit(_rng) - 0.5f) + a_spot.down * (unit(_rng) - 0.5f)) * (0.6f * spacing);
+			Fluid::Particle particle;
+			particle.life = a_settings.lifetime * (0.85f + 0.3f * unit(_rng));
+			particle.position = seat + jitter;
+			particle.velocity = a_spot.down * kWellSpeed;
+			particle.run = a_cheek.run;
+			particle.stream = static_cast<std::uint8_t>(std::clamp(a_cheek.stream, 0, static_cast<int>(Body::kMaxDucts) - 1));
+			particle.start = a_cheek.startOffset;
+			particle.reach = a_cheek.reach;
+			// Born on the lid: the solver's stick-pull only reaches for particles already
+			// touching, and a tear that starts free falls off the face before it lands.
+			particle.touching = true;
+			if (!particles.empty() && particles.back().run == a_cheek.run) {
+				const float gap = Fluid::Length(particle.position - particles.back().position);
+				if (gap < 2.0f * spacing) {
+					particles.back().link = std::max(kLinkSpacing * spacing, gap);
+				}
+			}
+			// Every welling particle hangs from the lid on its own leash, so the bead
+			// gathers there instead of running off as soon as it is born; the leashes
+			// go when the tear is released.
+			const float rest = std::max(Fluid::Length(particle.position - seat), 0.5f * spacing);
+			a_cheek.anchors.push_back({ particles.size(), seat, rest, a_cheek.id });
+			particles.push_back(particle);
+			born = true;
+			++a_cheek.emitted;
+			a_cheek.dirty = true;
+		}
+		if (!born) {
+			for (auto& anchor : a_cheek.anchors) {
+				if (anchor.owner == a_cheek.id) {
+					anchor.point = seat;  // the lid moves with the expression
+				}
+			}
+		}
+		if (a_cheek.left > 0) {
+			return;
+		}
+		a_cheek.hold -= a_delta;
+		if (a_cheek.hold > 0.0f) {
+			return;
+		}
+		std::erase_if(a_cheek.anchors, [&](const Fluid::Anchor& a) { return a.owner == a_cheek.id; });
+		for (auto& particle : particles) {
+			if (particle.run == a_cheek.run) {
+				particle.travel = 0.0f;  // the run starts here; the shuffling while welling does not count
+			}
+		}
+		a_cheek.welling = false;
+		const float rate = a_settings.rate * std::max(a_crier.intensity, 0.05f);
+		a_cheek.wait = 60.0f / rate * (0.5f + unit(_rng));
+		if (unit(_rng) < kFollowChance * a_settings.variety) {
+			a_cheek.wait *= kFollowWait;  // another tear right behind this one
+		}
+	}
+
+	// ---------------------------------------------------------------- simulation
+
+	bool Milk::Wake(Cheek& a_cheek, const Frame& a_frame, bool a_morphing, std::span<const Fluid::Capsule> a_hands)
+	{
+		bool woke = false;
+		if (!a_cheek.rested) {
+			a_cheek.restDown = a_frame.down;
+			a_cheek.rested = true;
+		}
+		// Sleeping tears rest on skin that stands still in head space. They wake when
+		// the skin moves under them (an expression), when the head has tilted enough
+		// for gravity to pull them a new way, or when a hand comes for them.
+		const bool all = a_morphing || Fluid::Dot(a_cheek.restDown, a_frame.down) < kTiltWake;
+		bool       asleep = false;
+		for (auto& particle : a_cheek.particles) {
+			if (!particle.asleep) {
+				continue;
+			}
+			bool wake = all;
+			for (std::size_t h = 0; h < a_hands.size() && !wake; ++h) {
+				const auto& hand = a_hands[h];
+				wake = SegmentDistance(particle.position, hand.a, hand.b) < hand.radius + 3.0f * a_cheek.spacing;
+			}
+			if (wake) {
+				particle.asleep = false;
+				particle.idle = 0.0f;
+				a_cheek.dirty = true;
+				woke = true;
+			} else {
+				asleep = true;
+			}
+		}
+		if (!asleep) {
+			a_cheek.restDown = a_frame.down;
+		}
+		return woke;
+	}
+
+	void Milk::Simulate(Cheek& a_cheek, const Frame& a_frame, const std::optional<Body::View>& a_view, std::span<const Fluid::Capsule> a_hands,
+		const Settings& a_settings, float a_delta, float a_mascara)
+	{
+		a_cheek.capsules.assign(a_hands.begin(), a_hands.end());
+		auto& particles = a_cheek.particles;
+		if (particles.empty() || !a_cheek.solver) {
+			a_cheek.accumulator = 0.0f;
+			return;
+		}
+		bool awake = false;
+		Vec3 low{};
+		Vec3 high{};
+		for (const auto& particle : particles) {
+			if (particle.asleep) {
+				continue;
+			}
+			if (!awake) {
+				low = high = particle.position;
+				awake = true;
+			} else {
+				low = { std::min(low.x, particle.position.x), std::min(low.y, particle.position.y), std::min(low.z, particle.position.z) };
+				high = { std::max(high.x, particle.position.x), std::max(high.y, particle.position.y), std::max(high.z, particle.position.z) };
+			}
+		}
+		if (!awake) {
+			// every tear rests on the skin; nothing to step
+			a_cheek.accumulator = 0.0f;
+			a_cheek.lastSteps = 0;
+			return;
+		}
+		a_cheek.accumulator = std::min(a_cheek.accumulator + a_delta, kMaxSteps * kStep);
+		auto& patches = a_cheek.skin.Patches();
+		patches.clear();
+		if (a_view) {
+			low = low - Vec3{ kSkinMargin, kSkinMargin, kSkinMargin };
+			high = high + Vec3{ kSkinMargin, kSkinMargin, kSkinMargin };
+			for (const auto& patch : a_view->patches) {
+				const Vec3 position = ToLocal(a_frame, patch.position);
+				if (position.x < low.x || position.y < low.y || position.z < low.z || position.x > high.x || position.y > high.y ||
+					position.z > high.z) {
+					continue;
+				}
+				patches.push_back({ position, ToLocalDirection(a_frame, patch.normal) });
+			}
+		}
+		a_cheek.skin.Build(kSkinCell);
+		a_cheek.solver->Configure(ParametersOf(a_settings, a_frame.scale, a_frame.down));
+		const Fluid::Colliders colliders{ a_cheek.capsules, {}, &a_cheek.skin };
+		int                    steps = 0;
+		while (a_cheek.accumulator >= kStep && steps < kMaxSteps) {
+			a_cheek.solver->Step(particles, a_cheek.anchors, colliders, kStep);
+			a_cheek.accumulator -= kStep;
+			++steps;
+		}
+		if (steps == kMaxSteps) {
+			a_cheek.accumulator = 0.0f;
+		}
+		if (steps > 0) {
+			a_cheek.dirty = true;
+		}
+		a_cheek.lastPosed = a_view ? a_view->patches.size() : 0;
+		a_cheek.lastPatches = patches.size();
+		a_cheek.lastSteps = steps;
+		std::erase_if(a_cheek.anchors, [](const Fluid::Anchor& a_anchor) { return a_anchor.rest <= 0.0f; });
+		if (steps > 0) {
+			Deposit(a_cheek, a_frame, a_settings, a_mascara);
+		}
+		if (a_cheek.probe && steps > 0) {
+			// One line per tear about its first solver step: is the face where the
+			// particles are, and did they land on it?
+			a_cheek.probe = false;
+			const auto&       first = particles.back();
+			const std::size_t nearest = a_cheek.skin.Nearest(first.position);
+			std::string       nearby = "no patch within 1 cm";
+			if (nearest != Fluid::kNone) {
+				const auto& patch = patches[nearest];
+				nearby = std::format("nearest patch {:.1f} mm away, depth {:.1f} mm along its normal ({:.2f}, {:.2f}, {:.2f})",
+					Fluid::Length(first.position - patch.position) * 1000.0f, Fluid::Dot(first.position - patch.position, patch.normal) * 1000.0f,
+					patch.normal.x, patch.normal.y, patch.normal.z);
+			}
+			std::size_t touching = 0;
+			for (const auto& particle : particles) {
+				touching += particle.touching ? 1 : 0;
+			}
+			const RE::NiPoint3 world = ToWorld(a_frame, first.position);
+			logger::info("first step: {} of {} posed patches under the fluid, {} of {} particles touching; newest particle at bone-space ({:.3f}, {:.3f}, {:.3f}) m = world ({:.1f}, {:.1f}, {:.1f}); {}; {} anchors",
+				patches.size(), a_cheek.lastPosed, touching, particles.size(), first.position.x, first.position.y, first.position.z, world.x, world.y, world.z, nearby,
+				a_cheek.anchors.size());
+			if (!patches.empty()) {
+				Vec3 lo = patches.front().position;
+				Vec3 hi = lo;
+				for (const auto& patch : patches) {
+					lo = { std::min(lo.x, patch.position.x), std::min(lo.y, patch.position.y), std::min(lo.z, patch.position.z) };
+					hi = { std::max(hi.x, patch.position.x), std::max(hi.y, patch.position.y), std::max(hi.z, patch.position.z) };
+				}
+				logger::info("first step: skin under the fluid spans bone-space x [{:.3f}, {:.3f}] y [{:.3f}, {:.3f}] z [{:.3f}, {:.3f}] m", lo.x, hi.x, lo.y,
+					hi.y, lo.z, hi.z);
+			} else if (a_view && !a_view->patches.empty()) {
+				const Vec3 sample = ToLocal(a_frame, a_view->patches.front().position);
+				logger::info("first step: the posed surface is elsewhere; its first patch is at bone-space ({:.3f}, {:.3f}, {:.3f}) m = world ({:.1f}, {:.1f}, {:.1f})",
+					sample.x, sample.y, sample.z, a_view->patches.front().position.x, a_view->patches.front().position.y, a_view->patches.front().position.z);
+			}
+		}
+	}
+
+	// A running tear leaves its trail behind: every trail_step of travel the hindmost
+	// awake particle of a tear stays where it is, asleep, so the bead thins as it
+	// runs and the last drop, alone, sticks. The link to the deposit stretches into
+	// the trail the rope pass draws.
+	void Milk::Deposit(Cheek& a_cheek, const Frame& a_frame, const Settings& a_settings, float a_mascara)
+	{
+		auto&       particles = a_cheek.particles;
+		const float step = a_settings.trailStep * 0.01f;
+		const Vec3  up = -a_frame.down;
+		std::size_t begin = 0;
+		while (begin < particles.size()) {
+			std::size_t end = begin + 1;
+			while (end < particles.size() && particles[end].run == particles[begin].run) {
+				++end;
+			}
+			std::size_t awake = 0;
+			std::size_t hindmost = Fluid::kNone;
+			float       highest = -std::numeric_limits<float>::max();
+			for (std::size_t i = begin; i < end; ++i) {
+				const auto& particle = particles[i];
+				if (particle.asleep || !particle.touching) {
+					continue;
+				}
+				++awake;
+				const float height = Fluid::Dot(particle.position, up);
+				if (height > highest) {
+					highest = height;
+					hindmost = i;
+				}
+			}
+			if (awake >= 2 && hindmost != Fluid::kNone && particles[hindmost].travel >= step) {
+				auto& particle = particles[hindmost];
+				particle.asleep = true;
+				particle.velocity = {};
+				particle.idle = 0.0f;
+				particle.bulk = false;  // a drop on the trail is drawn as part of the trail, not as part of the bead
+				particle.order = ++a_cheek.deposits;
+				LayStain(a_cheek, particle, particle.order, a_settings, a_mascara);
+				// the rest of the bead starts counting again: the next drop is left another
+				// step further on, not on the next frame
+				for (std::size_t i = begin; i < end; ++i) {
+					particles[i].travel = 0.0f;
+				}
+				a_cheek.dirty = true;
+			}
+			begin = end;
+		}
+	}
+
+	void Milk::Expire(Cheek& a_cheek, const Frame& a_frame, const Settings& a_settings, float a_delta, float a_mascara)
+	{
+		auto&      particles = a_cheek.particles;
+		bool       expired = false;
+		const auto touched = [&](Vec3 a_point) {
+			return std::ranges::any_of(a_cheek.capsules, [&](const Fluid::Capsule& a_capsule) {
+				const float reach = a_capsule.radius + a_cheek.spacing;
+				return SegmentDistance(a_point, a_capsule.a, a_capsule.b) < reach;
+			});
+		};
+		AgeStains(a_cheek, a_delta);
+		for (auto& particle : particles) {
+			particle.life -= a_delta;
+			if (particle.airborne > kFallGrace && Fluid::Dot(particle.velocity, a_frame.down) > kFallSpeed && particle.life > a_settings.fall) {
+				particle.life = a_settings.fall;
+				++a_cheek.cutFalling;
+			}
+			if (particle.life > a_settings.absorb && !a_cheek.capsules.empty() && touched(particle.position)) {
+				particle.life = a_settings.absorb;
+				particle.wiped = true;
+				++a_cheek.cutByHand;
+			}
+			if (particle.life <= 0.0f) {
+				expired = true;
+				// what was left of a bead dried on the skin: its streak ends here
+				if (particle.order == 0 && particle.touching && particle.run != 0 &&
+					std::ranges::none_of(a_cheek.stains, [&](const Stain& a_stain) { return a_stain.run == particle.run && a_stain.order == kBeadOrder; })) {
+					LayStain(a_cheek, particle, kBeadOrder, a_settings, a_mascara);
+				}
+			}
+		}
+		if (!expired) {
+			return;
+		}
+		a_cheek.dirty = true;
+		auto& remap = _remap;
+		remap.assign(particles.size(), Fluid::kNone);
+		std::size_t write = 0;
+		bool        previousKept = false;
+		for (std::size_t read = 0; read < particles.size(); ++read) {
+			if (particles[read].life <= 0.0f) {
+				if (previousKept) {
+					particles[write - 1].link = 0.0f;
+				}
+				previousKept = false;
+				continue;
+			}
+			remap[read] = write;
+			particles[write++] = particles[read];
+			previousKept = true;
+		}
+		particles.resize(write);
+		a_cheek.expired += static_cast<std::uint32_t>(remap.size() - write);
+		for (auto& blob : a_cheek.blobs) {
+			if (blob.live) {
+				blob.seed = blob.seed < remap.size() ? remap[blob.seed] : Fluid::kNone;
+				blob.live = blob.seed != Fluid::kNone;
+			}
+		}
+		std::erase_if(a_cheek.anchors, [&](Fluid::Anchor& a_anchor) {
+			a_anchor.particle = a_anchor.particle < remap.size() ? remap[a_anchor.particle] : Fluid::kNone;
+			return a_anchor.particle == Fluid::kNone;
+		});
+	}
+
+	void Milk::LayStain(Cheek& a_cheek, const Fluid::Particle& a_particle, std::uint32_t a_order, const Settings& a_settings, float a_mascara)
+	{
+		if (a_mascara <= 0.0f || _meshes.stainFailed) {
+			return;
+		}
+		auto& stains = a_cheek.stains;
+		// A streak that has already ended (dried, or run its full [look] mascara_length)
+		// takes nothing more, however far the tear goes on.
+		if (std::ranges::any_of(stains, [&](const Stain& a_stain) { return a_stain.run == a_particle.run && a_stain.order == kBeadOrder; })) {
+			return;
+		}
+		// Too many streaks on this cheek: the oldest one goes.
+		std::size_t runs = 0;
+		std::uint32_t oldest = std::numeric_limits<std::uint32_t>::max();
+		for (std::size_t i = 0; i < stains.size(); ++i) {
+			const bool first = std::ranges::none_of(stains.begin(), stains.begin() + static_cast<std::ptrdiff_t>(i),
+				[&](const Stain& a_other) { return a_other.run == stains[i].run; });
+			if (first) {
+				++runs;
+				oldest = std::min(oldest, stains[i].run);
+			}
+		}
+		const bool newRun = std::ranges::none_of(stains, [&](const Stain& a_stain) { return a_stain.run == a_particle.run; });
+		// [look] mascara_lines: with that many streaks on the cheek, a tear on a new
+		// path leaves none, so the lines there are stay put until they fade.
+		if (newRun && runs >= static_cast<std::size_t>(std::clamp(a_settings.mascaraLines, 1, static_cast<int>(kMaxStainRuns)))) {
+			return;
+		}
+		if ((newRun && runs >= kMaxStainRuns) || stains.size() >= kMaxStains) {
+			std::erase_if(stains, [&](const Stain& a_stain) { return a_stain.run == oldest; });
+		}
+		Stain stain;
+		stain.lifetime = a_settings.mascaraLifetime;
+		stain.strength = a_mascara;
+		stain.run = a_particle.run;
+		stain.stream = a_particle.stream;
+		stain.start = a_particle.start;
+		stain.reach = a_particle.reach;
+		stain.smeared = a_particle.wiped;
+		stain.life = stain.smeared ? stain.lifetime * kSmearLife : stain.lifetime;
+		// The streak follows the skin between where the tear last left a drop (or the
+		// lid it welled on) and here: points every kStainSpacing along the way, each
+		// put onto the skin, so the ribbon between them cannot dip under the cheek.
+		Vec3          here = OntoSkin(a_cheek.skin, a_particle.position, -kStainLift, &stain.normal);
+		std::uint32_t fromOrder = 0;
+		Vec3          from{};
+		float         fromAlong = 0.0f;
+		bool          known = false;
+		for (const auto& other : stains) {
+			if (other.run == a_particle.run && (!known || other.order > fromOrder)) {
+				fromOrder = other.order;
+				from = other.position;
+				fromAlong = other.along;
+				known = true;
+			}
+		}
+		if (!known && a_cheek.seatKnown) {
+			from = a_cheek.seat;
+			known = true;
+		}
+		std::uint32_t order = a_order == kBeadOrder ? kBeadOrder : a_order * 16;
+		float         span = known ? Fluid::Length(here - from) : 0.0f;
+		// The streak stops at [look] mascara_length (times the tear's own share of it):
+		// the point that would pass it is cut back to it and ends the run, so the tear
+		// running on leaves no more.
+		if (a_settings.mascaraLength > 0.0f && known) {
+			const float room = a_settings.mascaraLength * 0.01f * stain.reach - fromAlong;
+			if (room <= 0.0f) {
+				return;
+			}
+			if (span > room) {
+				here = OntoSkin(a_cheek.skin, from + (here - from) * (room / span), -kStainLift, &stain.normal);
+				span = room;
+				order = kBeadOrder;
+			}
+		}
+		if (known && order > fromOrder) {
+			const std::size_t between = std::min<std::size_t>(14, span > kStainSpacing ? static_cast<std::size_t>(span / kStainSpacing) : 0);
+			for (std::size_t k = 1; k <= between && stains.size() < kMaxStains; ++k) {
+				const float t = static_cast<float>(k) / static_cast<float>(between + 1);
+				Stain       step = stain;
+				step.position = OntoSkin(a_cheek.skin, from + (here - from) * t, -kStainLift, &step.normal);
+				step.order = fromOrder + std::max<std::uint32_t>(1, static_cast<std::uint32_t>(static_cast<float>(order - fromOrder) * t));
+				step.along = fromAlong + span * t;
+				stains.push_back(step);
+			}
+		}
+		stain.position = here;
+		stain.order = order;
+		stain.along = fromAlong + span;
+		stains.push_back(stain);
+		a_cheek.dirty = true;
+	}
+
+	void Milk::AgeStains(Cheek& a_cheek, float a_delta)
+	{
+		bool fading = false;
+		for (auto& stain : a_cheek.stains) {
+			stain.life -= a_delta;
+			fading = fading || stain.life < stain.lifetime * kStainFade;
+		}
+		if (std::erase_if(a_cheek.stains, [](const Stain& a_stain) { return a_stain.life <= 0.0f; }) > 0 || fading) {
+			a_cheek.dirty = true;  // a streak fading out thins every frame
+		}
+		auto& smudge = a_cheek.smudge;
+		if (smudge.strength > 0.0f) {
+			smudge.life -= a_delta;
+			if (smudge.life <= 0.0f) {
+				smudge = {};
+				a_cheek.dirty = true;
+			} else if (smudge.life < smudge.lifetime * kStainFade) {
+				a_cheek.dirty = true;
+			}
+		}
+	}
+
+	bool Milk::HasMascara(const Cheek& a_cheek)
+	{
+		return !a_cheek.stains.empty() || a_cheek.smudge.strength > 0.0f;
+	}
+
+	Vec3 Milk::OntoFace(const Frame& a_frame, const Body::View& a_view, Vec3 a_point, float a_depth, Vec3* a_normal)
+	{
+		const RE::NiPoint3 world = ToWorld(a_frame, a_point);
+		const float        limit = kFaceReach * a_frame.unit;
+		float              best = limit * limit;
+		const Body::Patch* nearest = nullptr;
+		for (const auto& patch : a_view.patches) {
+			const float distance = patch.position.GetSquaredDistance(world);
+			if (distance < best) {
+				best = distance;
+				nearest = &patch;
+			}
+		}
+		if (!nearest) {
+			return a_point;
+		}
+		const Vec3 p = ToLocal(a_frame, nearest->position);
+		const Vec3 n = ToLocalDirection(a_frame, nearest->normal);
+		if (a_normal) {
+			*a_normal = n;
+		}
+		return a_point - n * (Fluid::Dot(a_point - p, n) + a_depth);
+	}
+
+	void Milk::Smear(Stain& a_stain, Vec3 a_direction)
+	{
+		if (!a_stain.smeared) {
+			a_stain.smeared = true;
+			a_stain.life = std::min(a_stain.life, a_stain.lifetime * kSmearLife);
+		}
+		if (a_stain.dragged < kSmearMax && Fluid::LengthSquared(a_direction) > 0.5f) {
+			a_stain.dragDir = a_direction;
+			a_stain.drag = std::max(a_stain.drag, kSmearDrag);
+		}
+	}
+
+	void Milk::SmearSmudge(Smudge& a_smudge, Vec3 a_direction)
+	{
+		if (a_smudge.strength <= 0.0f) {
+			return;
+		}
+		if (!a_smudge.smeared) {
+			a_smudge.smeared = true;
+			a_smudge.life = std::min(a_smudge.life, a_smudge.lifetime * kSmearLife);
+		}
+		if (a_smudge.dragged < kSmearMax && Fluid::LengthSquared(a_direction) > 0.5f) {
+			a_smudge.dragDir = a_direction;
+			a_smudge.drag = std::max(a_smudge.drag, kSmearDrag);
+		}
+	}
+
+	void Milk::SmearStains(Cheek& a_cheek, const Frame& a_frame, const std::optional<Body::View>& a_view, const LidSpots& a_lids, float a_delta)
+	{
+		auto& smudge = a_cheek.smudge;
+		if (!a_cheek.capsules.empty()) {
+			// A hand over a mark drags it the way the hand moves along the skin; a hand
+			// resting on it drags it outward, away from the nose.
+			const auto touching = [&](Vec3 a_point, float a_extra) -> const Fluid::Capsule* {
+				for (const auto& capsule : a_cheek.capsules) {
+					if (SegmentDistance(a_point, capsule.a, capsule.b) < capsule.radius + a_extra) {
+						return &capsule;
+					}
+				}
+				return nullptr;
+			};
+			const auto direction = [&](const Fluid::Capsule& a_capsule, Vec3 a_normal) {
+				Vec3 velocity = (a_capsule.velocityA + a_capsule.velocityB) * 0.5f;
+				velocity = velocity - a_normal * Fluid::Dot(velocity, a_normal);
+				if (Fluid::Length(velocity) > kSmearMinSpeed) {
+					return Fluid::Normalize(velocity, a_cheek.outward);
+				}
+				return a_cheek.outwardKnown ? a_cheek.outward : Vec3{};
+			};
+			for (auto& stain : a_cheek.stains) {
+				if (const auto* capsule = touching(stain.position, a_cheek.spacing)) {
+					Smear(stain, direction(*capsule, stain.normal));
+					a_cheek.dirty = true;
+				}
+			}
+			if (smudge.strength > 0.0f) {
+				bool touched = false;
+				for (const auto& row : a_lids) {
+					for (const auto& lid : row) {
+						if (!lid || touched) {
+							continue;
+						}
+						if (const auto* capsule = touching(lid->point + smudge.offset, kSmudgeReach)) {
+							SmearSmudge(smudge, direction(*capsule, lid->normal));
+							a_cheek.dirty = true;
+							touched = true;
+						}
+					}
+				}
+			}
+		}
+		// Marks that are smearing move on along the skin.
+		const float step = kSmearSpeed * a_delta;
+		for (auto& stain : a_cheek.stains) {
+			if (stain.drag <= 0.0f) {
+				continue;
+			}
+			const float move = std::min(stain.drag, step);
+			stain.position += stain.dragDir * move;
+			stain.drag -= move;
+			stain.dragged += move;
+			stain.widen = std::min(kSmearWidth, 1.0f + (kSmearWidth - 1.0f) * stain.dragged / kSmearDrag);
+			if (a_view) {
+				stain.position = OntoFace(a_frame, *a_view, stain.position, -kStainLift, &stain.normal);
+			}
+			a_cheek.dirty = true;
+		}
+		if (smudge.drag > 0.0f) {
+			const float move = std::min(smudge.drag, step);
+			smudge.offset += smudge.dragDir * move;
+			smudge.drag -= move;
+			smudge.dragged += move;
+			smudge.widen = std::min(kSmearWidth, 1.0f + (kSmearWidth - 1.0f) * smudge.dragged / kSmearDrag);
+			a_cheek.dirty = true;
+		}
+	}
+
+	void Milk::PoseHands(Crier& a_crier, float a_delta)
+	{
+		for (std::size_t e = 0; e < Body::kEyes; ++e) {
+			const auto& frame = a_crier.frames[e];
+			auto&       next = a_crier.hands[e];
+			auto&       previous = a_crier.handPrevious[e];
+			next.clear();
+			const auto local = [&](const RE::NiPoint3& a_point) { return ToLocal(frame, a_point); };
+			for (std::size_t side = 0; side < 2; ++side) {
+				const auto bone = [&](std::size_t a_index) { return a_crier.handBones[side * kSideBones + a_index].get(); };
+				auto*      hand = bone(0);
+				auto*      middle = bone(1 + 2 * 3);
+				if (hand && middle) {
+					next.push_back({ local(hand->world.translate), local(middle->world.translate), kPalmRadius * hand->world.scale / frame.unit });
+				}
+				for (std::size_t chain = 0; chain < 4; ++chain) {
+					auto* base = bone(1 + chain * 3);
+					auto* mid = bone(2 + chain * 3);
+					auto* end = bone(3 + chain * 3);
+					if (!base || !mid || !end) {
+						continue;
+					}
+					const float        radius = kFingerRadius * base->world.scale / frame.unit;
+					const RE::NiPoint3 tip = end->world.translate + (end->world.translate - mid->world.translate) * kTipExtension;
+					next.push_back({ local(base->world.translate), local(mid->world.translate), radius });
+					next.push_back({ local(mid->world.translate), local(end->world.translate), radius });
+					next.push_back({ local(end->world.translate), local(tip), radius });
+				}
+			}
+			// Velocities relative to the side's bone, which is what its fluid feels.
+			const bool  moving = previous.size() == next.size() * 2 && a_delta > 0.0f;
+			const float cap = kMaxHandSpeed / frame.unit;
+			previous.resize(next.size() * 2);
+			for (std::size_t k = 0; k < next.size(); ++k) {
+				auto& piece = next[k];
+				if (moving) {
+					piece.velocityA = (piece.a - previous[2 * k]) * (1.0f / a_delta);
+					piece.velocityB = (piece.b - previous[2 * k + 1]) * (1.0f / a_delta);
+					if (Fluid::Length(piece.velocityA) > cap || Fluid::Length(piece.velocityB) > cap) {
+						piece.velocityA = piece.velocityB = {};
+					}
+				}
+				previous[2 * k] = piece.a;
+				previous[2 * k + 1] = piece.b;
+			}
+		}
+	}
+
+	void Milk::DryFace(Crier& a_crier)
+	{
+		for (auto& cheek : a_crier.cheeks) {
+			for (auto& particle : cheek.particles) {
+				particle.life = std::min(particle.life, kWipeFade);
+			}
+			std::erase_if(cheek.anchors, [&](const Fluid::Anchor& a_anchor) { return a_anchor.owner == cheek.id; });
+			cheek.welling = false;
+			cheek.left = 0;
+			cheek.queued = 0;
+			cheek.wait = std::max(cheek.wait, kWipeRest);
+			cheek.dirty = true;
+			// wiping by hand smears the mascara outward rather than taking it off
+			const Vec3 outward = cheek.outwardKnown ? cheek.outward : Vec3{};
+			for (auto& stain : cheek.stains) {
+				Smear(stain, outward);
+			}
+			SmearSmudge(cheek.smudge, outward);
+		}
+	}
+
+	void Milk::Clear(Cheek& a_cheek)
+	{
+		a_cheek.particles.clear();
+		a_cheek.stains.clear();  // a clean face: the mascara goes with the tears
+		a_cheek.smudge = {};
+		a_cheek.anchors.clear();
+		a_cheek.welling = false;
+		a_cheek.left = 0;
+		a_cheek.queued = 0;
+		a_cheek.accumulator = 0.0f;
+		a_cheek.rested = false;
+		a_cheek.dirty = true;
+	}
+
+	// ----------------------------------------------------------------- rendering
+
+	bool Milk::Attach(Cheek& a_cheek, RE::NiNode* a_anchor, RE::NiAVObject* a_root, bool a_world)
+	{
+		// The tears hang under the head bone, so the engine carries them with the
+		// head; their nodes are posed in head space and need no world transform. The
+		// world mount (A/B) hangs them under the cell node with the inverse of its
+		// transform, so their nodes are posed in world units, as 0.1.0 did.
+		RE::NiNode* parent = a_world ? a_root->parent : (a_anchor ? a_anchor : a_root->AsNode());
+		if (!parent) {
+			return false;
+		}
+		if (!a_cheek.root) {
+			a_cheek.root.reset(RE::NiNode::Create(0));
+			if (!a_cheek.root) {
+				return false;
+			}
+			a_cheek.root->name = Body::kMilkRoot;
+			a_cheek.root->GetFlags().set(RE::NiAVObject::Flag::kAlwaysDraw);
+		}
+		// Under the head bone the selective-update flags let the skeleton's own
+		// per-frame update reach this subtree, so settled tears that skip Draw still
+		// ride the head. Under the cell node the root stays as plain as 0.1.0's.
+		if (a_world) {
+			a_cheek.root->GetFlags().reset(RE::NiAVObject::Flag::kSelectiveUpdate, RE::NiAVObject::Flag::kSelectiveUpdateTransforms,
+				RE::NiAVObject::Flag::kSelectiveUpdateController);
+		} else {
+			a_cheek.root->GetFlags().set(RE::NiAVObject::Flag::kSelectiveUpdate, RE::NiAVObject::Flag::kSelectiveUpdateTransforms,
+				RE::NiAVObject::Flag::kSelectiveUpdateController);
+		}
+		if (a_cheek.root->parent != parent) {
+			if (a_cheek.root->parent) {
+				a_cheek.root->parent->DetachChild2(a_cheek.root.get());
+			}
+			parent->AttachChild(a_cheek.root.get(), true);
+			a_cheek.dirty = true;
+			// Bead bones posed in the other mount's units: no bead may keep its pose.
+			for (auto& blob : a_cheek.blobs) {
+				blob.live = false;
+			}
+			if (Settings::Snapshot().debugLog) {
+				const char* name = parent->name.c_str();
+				logger::info("milk root attached under \"{}\" ({} mount), actor 3D {}culled", name && *name ? name : "(unnamed)",
+					a_world ? "world" : "breast bone", a_root->GetAppCulled() ? "" : "not ");
+			}
+		}
+		a_cheek.root->local = a_world ? parent->world.Invert() : RE::NiTransform{};
+		a_cheek.root->SetAppCulled(a_root->GetAppCulled());
+		return true;
+	}
+
+	void Milk::Release(Cheek& a_cheek)
+	{
+		if (a_cheek.root && a_cheek.root->parent) {
+			a_cheek.root->parent->DetachChild2(a_cheek.root.get());
+		}
+		if (a_cheek.root) {
+			for (auto& blob : a_cheek.blobs) {
+				if (!blob.root || _spareBlobs.size() >= kMaxBlobs * 2) {
+					continue;
+				}
+				a_cheek.root->DetachChild2(blob.root.get());
+				blob.root->SetAppCulled(true);
+				blob.used = false;
+				blob.live = false;
+				blob.surface.clear();
+				_spareBlobs.push_back(std::move(blob));
+			}
+			for (auto& rope : a_cheek.ropes) {
+				if (!rope.root || _spareRopes.size() >= kMaxRopes * 2) {
+					continue;
+				}
+				a_cheek.root->DetachChild2(rope.root.get());
+				rope.root->SetAppCulled(true);
+				rope.used = false;
+				_spareRopes.push_back(std::move(rope));
+			}
+			for (auto& rope : a_cheek.stainRopes) {
+				if (!rope.root || _spareStains.size() >= kMaxStainRuns * 2) {
+					continue;
+				}
+				a_cheek.root->DetachChild2(rope.root.get());
+				rope.root->SetAppCulled(true);
+				rope.used = false;
+				_spareStains.push_back(std::move(rope));
+			}
+		}
+		a_cheek.blobs.clear();
+		a_cheek.ropes.clear();
+		a_cheek.stainRopes.clear();
+		a_cheek.root.reset();
+		a_cheek.opacity = a_cheek.shine = a_cheek.gloss = a_cheek.stainOpacity = a_cheek.refraction = -1.0f;
+		a_cheek.style = -1;
+		Clear(a_cheek);
+	}
+
+	Milk::Meshes& Milk::MeshesFor()
+	{
+		auto& meshes = _meshes;
+		if (meshes.failed || (meshes.blob && meshes.rope)) {
+			return meshes;
+		}
+		RE::BSModelDB::DBTraits::ArgsType args{};
+		for (auto [path, target] : { std::pair{ kBlobPath, &meshes.blob }, std::pair{ kRopePath, &meshes.rope } }) {
+			const auto error = RE::BSModelDB::Demand(path, *target, args);
+			if (error != RE::BSResource::ErrorCode::kNone || !*target) {
+				logger::error("could not load meshes\\{} (error {}); the milk leak stays invisible", path, std::to_underlying(error));
+				meshes.failed = true;
+				return meshes;
+			}
+		}
+		if (_directions.empty()) {
+			for (std::size_t i = 0;; ++i) {
+				auto* bone = meshes.blob->GetObjectByName(std::format("Blob{:02}", i));
+				if (!bone) {
+					break;
+				}
+				_directions.push_back(Fluid::Normalize(ToVec(bone->local.translate), { 0.0f, 0.0f, 1.0f }));
+			}
+			_scratch.resize(_directions.size());
+		}
+		if (_directions.size() < 12 || !meshes.rope->GetObjectByName(std::format("Rope{:02}", kRopeBones - 1))) {
+			logger::error("the milk meshes are from another version; reinstall Oninus Lactis NG");
+			meshes.failed = true;
+			return meshes;
+		}
+		// Lactis ships no stain mesh: the mark code inherited from Lacrima stays idle.
+		meshes.stainFailed = true;
+		return meshes;
+	}
+
+	RE::NiPointer<RE::BSDismemberSkinInstance> Milk::DismemberOf(RE::NiNode* a_root, const RE::BSFixedString& a_shape)
+	{
+		auto* object = a_root ? a_root->GetObjectByName(a_shape) : nullptr;
+		auto* geometry = object ? object->AsGeometry() : nullptr;
+		auto* skin = geometry ? geometry->GetGeometryRuntimeData().skinInstance.get() : nullptr;
+		return RE::NiPointer<RE::BSDismemberSkinInstance>(skin ? netimmerse_cast<RE::BSDismemberSkinInstance*>(skin) : nullptr);
+	}
+
+	// Under an actor's 3D the game hides every dismember partition whose body-part
+	// slot an equipped item covers. The shipped meshes carry no partitions since
+	// 0.1.1; a mesh that still does (0.1.0 left installed) is shown again each draw.
+	void Milk::Reveal(RE::BSDismemberSkinInstance* a_skin)
+	{
+		if (!a_skin) {
+			return;
+		}
+		const auto& data = a_skin->GetRuntimeData();
+		if (!data.partitions) {
+			return;
+		}
+		for (std::int32_t i = 0; i < data.numPartitions; ++i) {
+			if (!data.partitions[i].visible) {
+				a_skin->UpdateDismemberPartion(data.partitions[i].slot, true);
+			}
+		}
+	}
+
+	bool Milk::CloneBlob(Blob& a_blob)
+	{
+		auto& meshes = MeshesFor();
+		auto* clone = meshes.failed ? nullptr : meshes.blob->Clone();
+		auto* node = clone ? clone->AsNode() : nullptr;
+		if (!node) {
+			return false;
+		}
+		a_blob.root.reset(node);
+		a_blob.bones.clear();
+		for (std::size_t i = 0; i < _directions.size(); ++i) {
+			auto* bone = node->GetObjectByName(std::format("Blob{:02}", i));
+			if (!bone) {
+				return false;
+			}
+			a_blob.bones.push_back(bone);
+		}
+		node->GetFlags().set(RE::NiAVObject::Flag::kAlwaysDraw);
+		if (auto* shape = node->GetObjectByName(MeshNames::Get().blobShape)) {
+			shape->GetFlags().set(RE::NiAVObject::Flag::kAlwaysDraw);
+		}
+		a_blob.dismember = DismemberOf(node, MeshNames::Get().blobShape);
+		return true;
+	}
+
+	bool Milk::CloneRope(Rope& a_rope, RE::NiNode* a_mesh, const RE::BSFixedString& a_shape)
+	{
+		auto* clone = a_mesh ? a_mesh->Clone() : nullptr;
+		auto* node = clone ? clone->AsNode() : nullptr;
+		if (!node) {
+			return false;
+		}
+		a_rope.root.reset(node);
+		for (std::size_t i = 0; i < kRopeBones; ++i) {
+			a_rope.bones[i] = node->GetObjectByName(std::format("Rope{:02}", i));
+			if (!a_rope.bones[i]) {
+				return false;
+			}
+		}
+		node->GetFlags().set(RE::NiAVObject::Flag::kAlwaysDraw);
+		if (auto* shape = node->GetObjectByName(a_shape)) {
+			shape->GetFlags().set(RE::NiAVObject::Flag::kAlwaysDraw);
+		}
+		a_rope.dismember = DismemberOf(node, a_shape);
+		return true;
+	}
+
+	// The look style: 0 water (reflection, and a light of its own while [look] glow is
+	// above 0: at 0 the Own_Emit flag is off, not just dark), 1 plain (neither:
+	// ENB presets that amplify self-lit or reflective materials turn those into solid
+	// white), 2 refraction (plain, and the scene behind bends through the water).
+	void Milk::Shade(RE::NiAVObject* a_root, const Settings& a_settings, bool a_restyle)
+	{
+		using Flag = RE::BSShaderProperty::EShaderPropertyFlag8;
+		const bool  water = a_settings.style == 0;
+		const bool  refract = a_settings.style == 2;
+		const auto& names = MeshNames::Get();
+		for (const auto& name : { names.blobShape, names.ropeShape }) {
+			auto* shape = a_root->GetObjectByName(name);
+			auto* geometry = shape ? shape->AsGeometry() : nullptr;
+			auto* shader = geometry ? geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
+			if (!shader) {
+				continue;
+			}
+			shader->SetMaterialAlpha(a_settings.opacity);
+			if (auto* lighting = netimmerse_cast<RE::BSLightingShaderProperty*>(shader)) {
+				if (lighting->emissiveColor) {
+					*lighting->emissiveColor = RE::NiColor(1.0f, 1.0f, 1.0f);
+				}
+				lighting->emissiveMult = water ? a_settings.glow : 0.0f;
+			}
+			if (shader->GetMaterialType() == RE::BSShaderMaterial::Type::kLighting) {
+				if (auto* material = static_cast<RE::BSLightingShaderMaterialBase*>(shader->GetBaseMaterial())) {
+					material->specularColorScale = a_settings.shine;
+					material->specularPower = a_settings.gloss;
+					material->refractionPower = refract ? a_settings.refraction : 0.0f;
+					if (material->GetFeature() == RE::BSShaderMaterial::Feature::kEnvironmentMap) {
+						static_cast<RE::BSLightingShaderMaterialEnvmap*>(material)->envMapScale = water ? a_settings.reflection : 0.0f;
+					}
+				}
+			}
+			if (a_restyle) {
+				// the style changes which shader passes draw the tear: rebuild them. The
+				// static cubemap the water reflects is not lit by the scene, so in a dark
+				// room tears shone like lamps; EnvMap_Light_Fade is the game's own switch
+				// for fading a reflection with the light on the surface.
+				shader->SetFlags(Flag::kOwnEmit, water && a_settings.glow > 0.0f);
+				shader->SetFlags(Flag::kRefraction, refract);
+				shader->SetFlags(Flag::kEnvmapLightFade, water && a_settings.envLightFade);
+				shader->SetupGeometry(geometry);
+				shader->FinishSetupGeometry(geometry);
+			}
+		}
+	}
+
+	void Milk::ShadeStain(RE::NiAVObject* a_root, const Settings& a_settings)
+	{
+		auto* shape = a_root->GetObjectByName(MeshNames::Get().stainShape);
+		auto* geometry = shape ? shape->AsGeometry() : nullptr;
+		if (auto* shader = geometry ? geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr) {
+			shader->SetMaterialAlpha(a_settings.mascaraOpacity);
+		}
+	}
+
+	void Milk::Reshade(Cheek& a_cheek, const Settings& a_settings)
+	{
+		if (a_cheek.stainOpacity != a_settings.mascaraOpacity) {
+			for (auto& rope : a_cheek.stainRopes) {
+				ShadeStain(rope.root.get(), a_settings);
+			}
+			a_cheek.stainOpacity = a_settings.mascaraOpacity;
+		}
+		if (!Reshades(a_cheek, a_settings)) {
+			return;
+		}
+		const bool restyle = Restyles(a_cheek, a_settings);
+		for (auto& blob : a_cheek.blobs) {
+			Shade(blob.root.get(), a_settings, restyle);
+		}
+		for (auto& rope : a_cheek.ropes) {
+			Shade(rope.root.get(), a_settings, restyle);
+		}
+		a_cheek.opacity = a_settings.opacity;
+		a_cheek.shine = a_settings.shine;
+		a_cheek.gloss = a_settings.gloss;
+		a_cheek.reflection = a_settings.reflection;
+		a_cheek.glow = a_settings.glow;
+		a_cheek.style = a_settings.style;
+		a_cheek.refraction = a_settings.refraction;
+		a_cheek.envFade = a_settings.envLightFade ? 1 : 0;
+	}
+
+	// Whether the tear meshes carry other shader flags than these settings want, which
+	// rebuilds the passes: a new or recycled mesh (opacity reset) may carry another
+	// style's, and the style, env_light_fade and glow crossing 0 each switch a flag.
+	bool Milk::Restyles(const Cheek& a_cheek, const Settings& a_settings)
+	{
+		return a_cheek.opacity < 0.0f || a_cheek.style != a_settings.style || a_cheek.envFade != (a_settings.envLightFade ? 1 : 0) ||
+		       (a_cheek.glow > 0.0f) != (a_settings.glow > 0.0f);
+	}
+
+	// Whether the tear meshes are shaded with other [look] values than these. Draw asks
+	// it as well, so a change also reaches tears that have settled and skip the draw.
+	bool Milk::Reshades(const Cheek& a_cheek, const Settings& a_settings)
+	{
+		return Restyles(a_cheek, a_settings) || a_cheek.opacity != a_settings.opacity || a_cheek.shine != a_settings.shine ||
+		       a_cheek.gloss != a_settings.gloss || a_cheek.reflection != a_settings.reflection || a_cheek.glow != a_settings.glow ||
+		       a_cheek.refraction != a_settings.refraction;
+	}
+
+	Milk::Blob* Milk::AcquireBlob(Cheek& a_cheek)
+	{
+		for (auto& blob : a_cheek.blobs) {
+			if (!blob.used) {
+				blob.used = true;
+				return &blob;
+			}
+		}
+		if (a_cheek.blobs.size() >= kMaxBlobs) {
+			return nullptr;
+		}
+		Blob blob;
+		if (!_spareBlobs.empty()) {
+			blob = std::move(_spareBlobs.back());
+			_spareBlobs.pop_back();
+		} else if (_cloneBudget <= 0 || (--_cloneBudget, !CloneBlob(blob))) {
+			return nullptr;
+		}
+		blob.root->local = RE::NiTransform{};
+		a_cheek.root->AttachChild(blob.root.get(), true);
+		a_cheek.opacity = -1.0f;
+		blob.used = true;
+		a_cheek.blobs.push_back(std::move(blob));
+		return &a_cheek.blobs.back();
+	}
+
+	Milk::Rope* Milk::AcquireRope(Cheek& a_cheek)
+	{
+		for (auto& rope : a_cheek.ropes) {
+			if (!rope.used) {
+				rope.used = true;
+				return &rope;
+			}
+		}
+		if (a_cheek.ropes.size() >= kMaxRopes) {
+			return nullptr;
+		}
+		Rope rope;
+		if (!_spareRopes.empty()) {
+			rope = std::move(_spareRopes.back());
+			_spareRopes.pop_back();
+		} else if (_cloneBudget <= 0 || (--_cloneBudget, !CloneRope(rope, MeshesFor().rope.get(), MeshNames::Get().ropeShape))) {
+			return nullptr;
+		}
+		rope.root->local = RE::NiTransform{};
+		a_cheek.root->AttachChild(rope.root.get(), true);
+		a_cheek.opacity = -1.0f;
+		rope.used = true;
+		a_cheek.ropes.push_back(std::move(rope));
+		return &a_cheek.ropes.back();
+	}
+
+	Milk::Rope* Milk::AcquireStainRope(Cheek& a_cheek)
+	{
+		for (auto& rope : a_cheek.stainRopes) {
+			if (!rope.used) {
+				rope.used = true;
+				return &rope;
+			}
+		}
+		if (a_cheek.stainRopes.size() >= kMaxStainRuns + Body::kLidRows || MeshesFor().stainFailed) {  // + kLidRows: the smudge, a ribbon per row
+			return nullptr;
+		}
+		Rope rope;
+		if (!_spareStains.empty()) {
+			rope = std::move(_spareStains.back());
+			_spareStains.pop_back();
+		} else if (_cloneBudget <= 0 || (--_cloneBudget, !CloneRope(rope, MeshesFor().stain.get(), MeshNames::Get().stainShape))) {
+			return nullptr;
+		}
+		rope.root->local = RE::NiTransform{};
+		a_cheek.root->AttachChild(rope.root.get(), true);
+		a_cheek.stainOpacity = -1.0f;
+		rope.used = true;
+		a_cheek.stainRopes.push_back(std::move(rope));
+		return &a_cheek.stainRopes.back();
+	}
+
+	RE::NiPoint3 Milk::Mount::Point(Vec3 a_point) const
+	{
+		return world ? ToWorld(*frame, a_point) : ToBone(a_point);
+	}
+
+	Vec3 Milk::Mount::Direction(Vec3 a_direction) const
+	{
+		return world ? ToVec(frame->rotate * ToPoint(a_direction)) : a_direction;
+	}
+
+	float Milk::Mount::Radius(float a_radius) const
+	{
+		return a_radius * (world ? frame->unit : kUnitsPerMeter);
+	}
+
+	void Milk::PoseBlob(const Mount& a_mount, Blob& a_blob)
+	{
+		for (std::size_t i = 0; i < a_blob.bones.size(); ++i) {
+			RE::NiTransform world;
+			world.translate = a_mount.Point(a_blob.surface[i].position);
+			world.rotate = ArcRotation(_directions[i], a_mount.Direction(a_blob.surface[i].normal));
+			a_blob.bones[i]->local = world;
+		}
+		a_blob.root->SetAppCulled(false);
+	}
+
+	void Milk::PoseDrop(const Mount& a_mount, Blob& a_blob, Vec3 a_center, float a_radius, Vec3 a_up, Vec3 a_velocity, std::optional<Vec3> a_contact)
+	{
+		const float flying = a_contact ? 0.0f : std::max(Fluid::Length(a_velocity) - kStreakStart, 0.0f);
+		const float stretch = 1.0f + std::min(flying * kStreak, kMaxStretch - 1.0f);
+		const Vec3  along = Fluid::Normalize(a_velocity, a_up);
+		const float squash = a_contact ? kSquash : 1.0f;
+		const Vec3  normal = a_contact ? *a_contact : a_up;
+		const Vec3  center = a_contact ? a_center - normal * (a_radius * (1.0f - squash) * 0.7f) : a_center;
+		for (std::size_t i = 0; i < a_blob.bones.size(); ++i) {
+			const Vec3      direction = _directions[i];
+			const Vec3      offset = Stretch(Stretch(direction, along, stretch), normal, squash);
+			const Vec3      facing = Fluid::Normalize(Stretch(Stretch(direction, along, 1.0f / stretch), normal, 1.0f / squash), direction);
+			RE::NiTransform world;
+			world.translate = a_mount.Point(center + offset * a_radius);
+			world.rotate = ArcRotation(direction, a_mount.Direction(facing));
+			a_blob.bones[i]->local = world;
+		}
+		a_blob.live = false;
+		a_blob.root->SetAppCulled(false);
+	}
+
+	void Milk::PoseRope(const Mount& a_mount, Cheek& a_cheek, Rope& a_rope, std::size_t a_begin, std::size_t a_end, const Fluid::Anchor* a_anchor,
+		float a_width, float a_fade)
+	{
+		_ropePoints.assign(a_cheek.particles.begin() + static_cast<std::ptrdiff_t>(a_begin), a_cheek.particles.begin() + static_cast<std::ptrdiff_t>(a_end));
+		PoseRopeFrom(a_mount, a_cheek, a_rope, a_anchor, a_width, a_fade);
+	}
+
+	void Milk::PoseRopeFrom(const Mount& a_mount, Cheek& a_cheek, Rope& a_rope, const Fluid::Anchor* a_anchor, float a_width, float a_fade)
+	{
+		const float spacing = a_cheek.spacing;
+		const float volume = spacing * spacing * spacing;
+		const float fade = std::max(a_fade, 1e-3f);
+		auto&       points = _ropePoints;
+		if (a_anchor) {
+			Fluid::Particle tip = points.back();
+			tip.position = a_anchor->point;
+			points.push_back(tip);
+		}
+		const std::size_t count = points.size();
+		auto&             along = _ropeAlong;
+		along.assign(count, 0.0f);
+		for (std::size_t k = 1; k < count; ++k) {
+			along[k] = along[k - 1] + Fluid::Length(points[k].position - points[k - 1].position);
+		}
+		const float nominal = std::sqrt(volume / (std::numbers::pi_v<float> * kSlotSpacing * spacing));
+		const float total = along.back();
+		const float cap = nominal;
+		const auto  gapAt = [&](std::size_t k) {
+            const std::size_t lo = k > 0 ? k - 1 : 0;
+            const std::size_t hi = std::min(k + 2, count - 1);
+            return (along[hi] - along[lo]) / static_cast<float>(std::max<std::size_t>(hi - lo, 1));
+		};
+
+		std::array<RE::NiPoint3, kRopeBones> positions{};
+		std::array<float, kRopeBones>        radii{};
+		std::size_t                          segment = 0;
+		for (std::size_t b = 0; b < kRopeBones; ++b) {
+			const float t = static_cast<float>(b) / static_cast<float>(kRopeBones - 1);
+			const float s = -cap + (total + 2.0f * cap) * t;
+			const float clamped = std::clamp(s, 0.0f, total);
+			while (segment + 2 < count && along[segment + 1] < clamped) {
+				++segment;
+			}
+			const auto& a = points[segment];
+			const auto& c = points[std::min(segment + 1, count - 1)];
+			const float length = along[std::min(segment + 1, count - 1)] - along[segment];
+			const float u = length > 1e-6f ? std::clamp((clamped - along[segment]) / length, 0.0f, 1.0f) : 0.0f;
+			Vec3        point = a.position + (c.position - a.position) * u;
+			const Vec3  tangent = Fluid::Normalize(c.position - a.position, { 0.0f, 0.0f, 1.0f });
+			if (s < 0.0f) {
+				point = point + tangent * s;
+			} else if (s > total) {
+				point = point + tangent * (s - total);
+			}
+			const float gap = std::max(gapAt(segment), 0.3f * spacing);
+			float       radius = std::clamp(std::sqrt(volume / (std::numbers::pi_v<float> * gap)), 0.2f * nominal, 1.6f * nominal);
+			const float weight = std::clamp((a.life + (c.life - a.life) * u) / fade, 0.0f, 1.0f);
+			radius *= std::sqrt(weight) * a_width;
+			if (b == 0 || (b + 1 == kRopeBones && !a_anchor)) {
+				radius *= 0.55f;
+			} else if (b == 1 || (b + 2 == kRopeBones && !a_anchor)) {
+				radius *= 0.85f;
+			}
+			positions[b] = a_mount.Point(point);
+			radii[b] = a_mount.Radius(radius);
+		}
+		Bend(a_rope, positions, radii);
+	}
+
+	void Milk::Bend(Rope& a_rope, const std::array<RE::NiPoint3, kRopeBones>& a_positions, const std::array<float, kRopeBones>& a_radii)
+	{
+		GeometryMath::UpdateFrames(a_rope.frames, a_positions, -1);
+		for (std::size_t b = 0; b < kRopeBones; ++b) {
+			RE::NiTransform world;
+			world.rotate = Rotation(a_rope.frames[b]);
+			world.translate = a_positions[b];
+			world.scale = std::max(a_radii[b], 0.0001f);  // a 0.2 mm hairline where a ribbon carries nothing
+			a_rope.bones[b]->local = world;
+		}
+		a_rope.root->SetAppCulled(false);
+	}
+
+	void Milk::DrawStains(Cheek& a_cheek, const Mount& a_mount, const Settings& a_settings, const Spots& a_spots, const LidSpots& a_lids)
+	{
+		for (auto& rope : a_cheek.stainRopes) {
+			rope.used = false;
+		}
+		std::size_t shown = 0;
+		auto&       path = _stainPath;
+		auto&       normals = _stainNormal;
+		auto&       radius = _stainRadius;
+		// where this eye's tears start: every mark is near it
+		const Spot* anchor = nullptr;
+		for (const auto& spot : a_spots) {
+			if (spot && !anchor) {
+				anchor = &*spot;
+			}
+		}
+		const auto stray = [&](Vec3 a_point, float a_reach, const char* a_what, std::size_t a_row, std::size_t a_index) {
+			if (!anchor) {
+				return false;
+			}
+			const float distance = Fluid::Length(a_point - anchor->point);
+			if (distance <= a_reach) {
+				return false;
+			}
+			if (!a_cheek.strayLogged) {
+				a_cheek.strayLogged = true;
+				logger::warn("mascara: {} {}/{} at ({:.3f}, {:.3f}, {:.3f}) is {:.1f} cm from the tears' start ({:.3f}, {:.3f}, {:.3f}); left out",
+					a_what, a_row, a_index, a_point.x, a_point.y, a_point.z, distance * 100.0f, anchor->point.x, anchor->point.y, anchor->point.z);
+			}
+			return true;
+		};
+
+		// The mascara under the eye: a ribbon along each row of lid points, tiled
+		// top to bottom. The top row is a thin band under the lashes, all the way into
+		// both corners of the eye, where the lid line curves up and mascara pools. The
+		// rows below it spread the mascara down over the skin only where the tears ran:
+		// around each streak's start on the lid (and the welling tear's seat), fading
+		// out sideways over kPoolReach, as tall as the spread exposes (the setting,
+		// grown by every tear and by a wipe) and shorter toward the corners. A uniform
+		// band and uniform rows read as dark circles under the eyes; this reads as
+		// mascara that ran where the tears did. The whole moves as one when smeared.
+		const auto& smudge = a_cheek.smudge;
+		if (smudge.strength > 0.0f && a_settings.mascaraSmudge > 0.0f) {
+			const float fade = std::sqrt(std::clamp(smudge.life / std::max(smudge.lifetime * kStainFade, 1e-3f), 0.0f, 1.0f));
+			const float band = kSmudgeRadius * a_settings.mascaraWidth * a_settings.mascaraSmudge * (0.5f + 0.5f * smudge.strength) * smudge.widen * fade;
+			// how much each lid point is under a tear's path (or a corner of the eye), 0 to 1
+			std::array<float, Body::kLidPoints> pooled{};
+			const auto                          pool = [&](Vec3 a_at, float a_weight) {
+				for (std::size_t i = 0; i < Body::kLidPoints; ++i) {
+					if (const auto& lid = a_lids[0][i]) {
+						const float d = Fluid::Length(lid->point + smudge.offset - a_at) / kPoolReach;
+						pooled[i] = std::max(pooled[i], a_weight * std::exp(-d * d));
+					}
+				}
+			};
+			if (a_cheek.seatKnown) {
+				pool(a_cheek.seat, 1.0f);
+			}
+			{
+				// each streak's start: the stain laid first in its run, put where the
+				// streak is drawn from
+				std::array<std::pair<std::uint32_t, std::size_t>, kMaxStainRuns> firsts{};
+				std::size_t                                                      runs = 0;
+				for (std::size_t s = 0; s < a_cheek.stains.size(); ++s) {
+					const auto& stain = a_cheek.stains[s];
+					std::size_t at = runs;
+					for (std::size_t k = 0; k < runs; ++k) {
+						if (firsts[k].first == stain.run) {
+							at = k;
+						}
+					}
+					if (at == runs) {
+						if (runs == firsts.size()) {
+							continue;
+						}
+						firsts[runs++] = { stain.run, s };
+					} else if (stain.order < a_cheek.stains[firsts[at].second].order) {
+						firsts[at].second = s;
+					}
+				}
+				for (std::size_t k = 0; k < runs; ++k) {
+					const auto& first = a_cheek.stains[firsts[k].second];
+					const auto& origin = a_spots[std::min<std::size_t>(first.stream, Body::kMaxDucts - 1)];
+					pool(origin ? LidPoint(*origin, first.start) + (first.smeared ? first.dragDir * first.dragged : Vec3{}) : first.position, 1.0f);
+				}
+			}
+			// and under both corners of the eye, inner and outer, where mascara gathers
+			// whether or not a tear ran there: the band is fuller there and a little of
+			// the spread shows below the corners, not only in the middle of the lid
+			if (a_settings.mascaraCorners > 0.0f) {
+				for (const std::size_t end : { std::size_t{ 0 }, Body::kLidPoints - 1 }) {
+					if (const auto& corner = a_lids[0][end]) {
+						pool(corner->point + smudge.offset, a_settings.mascaraCorners);
+					}
+				}
+			}
+			// rows below the band exposed, 0 to kLidRows - 1
+			const float spread = std::clamp(a_settings.mascaraSpread * (0.6f + 0.4f * smudge.strength) * smudge.widen, 0.0f, 1.0f) * static_cast<float>(Body::kLidRows - 1);
+			std::array<float, Body::kLidPoints> bottom{};  // where the row above ends: along the skin below the lid point above this one
+			for (std::size_t row = 0; row < Body::kLidRows; ++row) {
+				const float exposed = row == 0 ? 1.0f : std::clamp(spread - static_cast<float>(row - 1), 0.0f, 1.0f);
+				if (exposed <= 0.0f) {
+					break;
+				}
+				path.clear();
+				normals.clear();
+				radius.clear();
+				// the band keeps its height into the corners; the rows below narrow toward them
+				// (less so the more mascara gathers in the corners)
+				const float narrow = row == 0 ? 1.0f : 0.55f - 0.35f * static_cast<float>(row - 1);
+				const float corners = narrow + (0.9f - std::min(narrow, 0.9f)) * std::clamp(a_settings.mascaraCorners, 0.0f, 1.0f);
+				for (std::size_t i = 0; i < Body::kLidPoints; ++i) {
+					const auto& lid = a_lids[row][i];
+					if (!lid || stray(lid->point, kLidReach, "lid point", row, i)) {
+						continue;
+					}
+					const float bell = corners + (1.0f - corners) * std::sin(std::numbers::pi_v<float> * (static_cast<float>(i) + 0.5f) / static_cast<float>(Body::kLidPoints));
+					Vec3        center = lid->point;
+					float       half = band * bell * (0.7f + 0.3f * pooled[i]);  // the band is fuller where the tears ran
+					if (row > 0) {
+						// from the row above's lower edge down, along the skin toward this row's point
+						const auto& above = a_lids[row - 1][i];
+						if (!above) {
+							continue;
+						}
+						const Vec3  down = Fluid::Normalize(lid->point - above->point, lid->down);
+						const float step = Fluid::Length(lid->point - above->point);
+						if (step > kLidStep) {
+							if (!a_cheek.strayLogged) {
+								a_cheek.strayLogged = true;
+								logger::warn("mascara: lid point {}/{} is {:.1f} cm below the row above; left out", row, i, step * 100.0f);
+							}
+							continue;
+						}
+						half = 0.5f * exposed * step * bell * fade * pooled[i];  // only under a tear's path; a hairline elsewhere
+						center = above->point + down * (bottom[i] + half);
+						bottom[i] += 2.0f * half - step;  // now below this row's point
+					} else {
+						bottom[i] = half;
+					}
+					path.push_back(center + smudge.offset + lid->normal * kStainLift);
+					normals.push_back(lid->normal);
+					radius.push_back(half);
+				}
+				if (path.size() >= 2) {
+					// The stain texture fades a ribbon out over the last tenth of its length
+					// at each end. Run the ribbon on past both corner points by about that
+					// much, so the fade falls beyond the corners of the eye, not short of them.
+					const std::size_t last = path.size() - 1;
+					const Vec3        before = path[0] + (path[0] - path[1]) * kCornerRun;
+					const Vec3        after = path[last] + (path[last] - path[last - 1]) * kCornerRun;
+					path.insert(path.begin(), before);
+					normals.insert(normals.begin(), normals.front());
+					radius.insert(radius.begin(), radius.front());
+					path.push_back(after);
+					normals.push_back(normals.back());
+					radius.push_back(radius.back());
+					if (Rope* rope = AcquireStainRope(a_cheek)) {
+						PoseStain(a_mount, *rope, false);
+						++shown;
+					}
+				}
+			}
+		}
+
+		auto& stains = a_cheek.stains;
+		if (!stains.empty()) {
+			// the streaks in the order they were laid, each from the lid down its path
+			auto& order = _stainOrder;
+			order.resize(stains.size());
+			std::iota(order.begin(), order.end(), std::size_t{ 0 });
+			std::ranges::stable_sort(order, [&](std::size_t a_lhs, std::size_t a_rhs) {
+				return stains[a_lhs].run != stains[a_rhs].run ? stains[a_lhs].run < stains[a_rhs].run : stains[a_lhs].order < stains[a_rhs].order;
+			});
+			const float width = kStainRadius * a_settings.mascaraWidth;
+			const auto  radiusOf = [&](const Stain& a_stain) {
+				const float fade = std::clamp(a_stain.life / std::max(a_stain.lifetime * kStainFade, 1e-3f), 0.0f, 1.0f);
+				return width * (0.6f + 0.4f * a_stain.strength) * a_stain.widen * std::sqrt(fade);
+			};
+			for (std::size_t begin = 0; begin < order.size();) {
+				std::size_t end = begin + 1;
+				while (end < order.size() && stains[order[end]].run == stains[order[begin]].run) {
+					++end;
+				}
+				const Stain& first = stains[order[begin]];
+				const Stain& last = stains[order[end - 1]];
+				path.clear();
+				normals.clear();
+				radius.clear();
+				// the streak starts in the smudge under the lid, where the tear welled
+				const auto& origin = a_spots[std::min<std::size_t>(first.stream, Body::kMaxDucts - 1)];
+				if (origin) {
+					const Vec3 lid = LidPoint(*origin, first.start) + (first.smeared ? first.dragDir * first.dragged : Vec3{});
+					path.push_back(lid + origin->normal * kStainLift);
+					normals.push_back(origin->normal);
+					radius.push_back(radiusOf(first));
+				}
+				for (std::size_t i = begin; i < end; ++i) {
+					if (stray(stains[order[i]].position, kStreakReach, "streak point", stains[order[i]].run, i - begin)) {
+						continue;
+					}
+					path.push_back(stains[order[i]].position);
+					normals.push_back(stains[order[i]].normal);
+					radius.push_back(radiusOf(stains[order[i]]));
+				}
+				// a tear still running: its streak reaches the bead, but no further than
+				// [look] mascara_length lets it
+				if (last.order != kBeadOrder) {
+					Vec3        sum{};
+					std::size_t count = 0;
+					for (const auto& particle : a_cheek.particles) {
+						if (particle.run == first.run && particle.order == 0 && (particle.touching || particle.airborne < kTipGrace)) {
+							sum += particle.position;
+							++count;
+						}
+					}
+					const float room = a_settings.mascaraLength > 0.0f ? a_settings.mascaraLength * 0.01f * last.reach - last.along : std::numeric_limits<float>::max();
+					if (count > 0 && room > 0.0f) {
+						Vec3        bead = sum * (1.0f / static_cast<float>(count));
+						const float reach = Fluid::Length(bead - last.position);
+						if (reach > room) {
+							bead = last.position + (bead - last.position) * (room / reach);
+						}
+						Vec3 normal = last.normal;
+						path.push_back(OntoSkin(a_cheek.skin, bead, -kStainLift, &normal));
+						normals.push_back(normal);
+						radius.push_back(radiusOf(last));
+					}
+				}
+				if (path.size() >= 2) {
+					if (Rope* rope = AcquireStainRope(a_cheek)) {
+						PoseStain(a_mount, *rope, true);
+						++shown;
+					}
+				}
+				begin = end;
+			}
+		}
+		for (auto& rope : a_cheek.stainRopes) {
+			if (rope.used) {
+				Reveal(rope.dismember.get());
+			} else {
+				rope.root->SetAppCulled(true);
+			}
+		}
+		a_cheek.shownStains = shown;
+	}
+
+	// Poses a mark along _stainPath with _stainRadius, flat on the skin along
+	// _stainNormal: a streak (a_taper) thins toward its end, a smudge keeps its width
+	// and rounds off at both ends. The texture fades every mark in and out at its ends
+	// and softly at its sides, past the radius (kStainHalf).
+	void Milk::PoseStain(const Mount& a_mount, Rope& a_rope, bool a_taper)
+	{
+		const auto&       path = _stainPath;
+		const auto&       pathNormals = _stainNormal;
+		const auto&       radius = _stainRadius;
+		const std::size_t count = path.size();
+		auto&             along = _ropeAlong;
+		along.assign(count, 0.0f);
+		for (std::size_t k = 1; k < count; ++k) {
+			along[k] = along[k - 1] + Fluid::Length(path[k] - path[k - 1]);
+		}
+		const float total = std::max(along.back(), 1e-6f);
+		std::array<RE::NiPoint3, kRopeBones> positions{};
+		std::array<RE::NiPoint3, kRopeBones> normals{};
+		std::array<float, kRopeBones>        radii{};
+		std::size_t                          segment = 0;
+		for (std::size_t b = 0; b < kRopeBones; ++b) {
+			const float t = static_cast<float>(b) / static_cast<float>(kRopeBones - 1);
+			const float s = total * t;
+			while (segment + 2 < count && along[segment + 1] < s) {
+				++segment;
+			}
+			const std::size_t next = std::min(segment + 1, count - 1);
+			const float       length = along[next] - along[segment];
+			const float       u = length > 1e-6f ? std::clamp((s - along[segment]) / length, 0.0f, 1.0f) : 0.0f;
+			float r = (radius[segment] + (radius[next] - radius[segment]) * u) * (a_taper ? 1.0f - 0.35f * t : 1.0f);
+			if (b == 0 || b + 1 == kRopeBones) {
+				r *= a_taper ? 0.6f : 1.0f;  // the texture rounds off a smudge's ends
+			}
+			positions[b] = a_mount.Point(path[segment] + (path[next] - path[segment]) * u);
+			const Vec3 normal = Fluid::Normalize(pathNormals[segment] + (pathNormals[next] - pathNormals[segment]) * u, pathNormals[segment]);
+			normals[b] = ToPoint(a_mount.Direction(normal));
+			radii[b] = a_mount.Radius(r / kStainHalf);
+		}
+		BendFlat(a_rope, positions, radii, normals);
+	}
+
+	// A ribbon: y along the path, z along the skin's normal (its thin side), x across.
+	void Milk::BendFlat(Rope& a_rope, const std::array<RE::NiPoint3, kRopeBones>& a_positions, const std::array<float, kRopeBones>& a_radii,
+		const std::array<RE::NiPoint3, kRopeBones>& a_normals)
+	{
+		for (std::size_t b = 0; b < kRopeBones; ++b) {
+			const std::size_t before = b > 0 ? b - 1 : b;
+			const std::size_t after = std::min(b + 1, kRopeBones - 1);
+			RE::NiPoint3      y = a_positions[after] - a_positions[before];
+			if (y.Unitize() <= 1e-6f) {
+				y = { 0.0f, 0.0f, -1.0f };
+			}
+			RE::NiPoint3 z = a_normals[b] - y * a_normals[b].Dot(y);
+			if (z.Unitize() <= 1e-6f) {
+				z = y.Cross(std::abs(y.x) < 0.9f ? RE::NiPoint3{ 1.0f, 0.0f, 0.0f } : RE::NiPoint3{ 0.0f, 1.0f, 0.0f });
+				z.Unitize();
+			}
+			RE::NiTransform world;
+			world.rotate = Rotation({ y.Cross(z), y, z });
+			world.translate = a_positions[b];
+			world.scale = std::max(a_radii[b], 0.0001f);  // a 0.2 mm hairline where a ribbon carries nothing
+			a_rope.bones[b]->local = world;
+		}
+		a_rope.root->SetAppCulled(false);
+	}
+
+	void Milk::Draw(Cheek& a_cheek, const Mount& a_mount, const Settings& a_settings, const Spots& a_spots, const LidSpots& a_lids, bool a_markers)
+	{
+		auto& meshes = MeshesFor();
+		if (meshes.failed) {
+			return;
+		}
+		auto&      particles = a_cheek.particles;
+		const bool restyled = Reshades(a_cheek, a_settings) || (!a_cheek.stainRopes.empty() && a_cheek.stainOpacity != a_settings.mascaraOpacity);
+		if (!a_mount.world && !a_cheek.dirty && !restyled && !a_markers) {
+			// Nothing moved since the last draw, and the nodes hang under the head
+			// bone, so they are already where the tears are. Only a trail thinning
+			// out as it dries still needs redrawing.
+			bool settled = true;
+			for (const auto& particle : particles) {
+				if (!particle.asleep || particle.life <= a_settings.fade) {
+					settled = false;
+					break;
+				}
+			}
+			if (settled) {
+				return;
+			}
+		}
+		const Vec3  up = -a_mount.frame->down;
+		const float spacing = a_cheek.spacing;
+		const float volume = spacing * spacing * spacing;
+		const float kernel = 2.0f * spacing;
+		a_cheek.field.Rebuild(particles, kernel, a_settings.fade);
+		const auto& field = a_cheek.field;
+		auto&       pooled = _pooled;
+		pooled.clear();
+		for (std::size_t i = 0; i < particles.size(); ++i) {
+			if (!particles[i].asleep) {
+				const float count = field.Count(particles[i].position);
+				particles[i].bulk = particles[i].bulk ? count >= kBulkLeave : count >= kBulkEnter;
+			}
+			if (particles[i].bulk) {
+				pooled.push_back(i);
+			}
+		}
+		auto& clusters = _clusters;
+		Fluid::FindClusters(particles, pooled, 2.0f * spacing, a_cheek.clusterGrid, clusters);
+		auto& owner = _owner;
+		owner.assign(particles.size(), Fluid::kNone);
+		for (std::size_t c = 0; c < clusters.size(); ++c) {
+			for (const auto member : clusters[c].members) {
+				owner[member] = c;
+			}
+		}
+		for (auto& blob : a_cheek.blobs) {
+			blob.used = false;
+		}
+		for (auto& rope : a_cheek.ropes) {
+			rope.used = false;
+		}
+		auto& hints = _hints;
+		hints.resize(clusters.size());
+		for (auto& hinted : hints) {
+			hinted.clear();
+		}
+		for (std::size_t b = 0; b < a_cheek.blobs.size(); ++b) {
+			auto& blob = a_cheek.blobs[b];
+			if (blob.live && blob.seed < particles.size() && owner[blob.seed] != Fluid::kNone) {
+				hints[owner[blob.seed]].push_back(b);
+				blob.used = true;
+			} else {
+				blob.live = false;
+			}
+		}
+
+		const float blend = 1.0f - std::exp(-RE::GetSecondsSinceLastFrame() / kSmoothing);
+		auto&       claimed = _claimed;
+		claimed.clear();
+		auto& droplets = _droplets;
+		droplets.clear();
+		const auto contactOf = [&](std::span<const std::size_t> a_members) -> std::optional<Vec3> {
+            const auto& skin = a_cheek.skin.Patches();
+            for (const auto m : a_members) {
+                const auto& particle = particles[m];
+                if (!particle.touching || particle.surface < 0) {
+                    continue;
+                }
+                const auto index = static_cast<std::size_t>(particle.surface);
+                if (index < a_cheek.capsules.size()) {
+                    const auto& capsule = a_cheek.capsules[index];
+                    return Fluid::Normalize(particle.position - (capsule.a + (capsule.b - capsule.a) * particle.along), up);
+                }
+                if (index - a_cheek.capsules.size() < skin.size()) {
+                    return skin[index - a_cheek.capsules.size()].normal;
+                }
+            }
+            return std::nullopt;
+		};
+		const auto velocityOf = [&](std::span<const std::size_t> a_members) {
+			Vec3 sum{};
+			for (const auto m : a_members) {
+				sum += particles[m].velocity;
+			}
+			return a_members.empty() ? sum : sum * (1.0f / static_cast<float>(a_members.size()));
+		};
+		const auto weightOf = [&](std::span<const std::size_t> a_members) {
+			float sum = 0.0f;
+			for (const auto m : a_members) {
+				sum += field.Weight(particles[m]);
+			}
+			return a_members.empty() ? 0.0f : sum / static_cast<float>(a_members.size());
+		};
+		for (std::size_t c = 0; c < clusters.size(); ++c) {
+			const auto& cluster = clusters[c];
+			if (cluster.members.size() < kBlobMinimum) {
+				droplets.push_back({ cluster.center, Fluid::VolumeRadius(cluster.members.size(), volume) * std::cbrt(weightOf(cluster.members)),
+					velocityOf(cluster.members), contactOf(cluster.members) });
+				continue;
+			}
+			auto& seeds = _seeds;
+			seeds.clear();
+			for (const auto b : hints[c]) {
+				seeds.push_back(a_cheek.blobs[b].seed);
+			}
+			const bool settled = std::ranges::all_of(cluster.members, [&](std::size_t a_member) {
+				return particles[a_member].asleep && particles[a_member].life > a_settings.fade;
+			});
+			Fluid::SplitCluster(particles, cluster, 4.0f * spacing, seeds, _pieces);
+			for (const auto& piece : _pieces) {
+				Blob* blob = piece.hint != Fluid::kNone ? &a_cheek.blobs[hints[c][piece.hint]] : AcquireBlob(a_cheek);
+				if (!blob) {
+					continue;
+				}
+				if (piece.hint != Fluid::kNone) {
+					claimed.push_back(hints[c][piece.hint]);
+				}
+				const bool warm = blob->live && blob->surface.size() == _directions.size();
+				if (settled && warm && piece.hint != Fluid::kNone) {
+					blob->seed = piece.seed;
+					if (a_mount.world) {
+						PoseBlob(a_mount, *blob);  // world coordinates move with the head even when the tear does not
+					}
+					continue;
+				}
+				const auto previous = warm ? std::span<const Fluid::SurfacePoint>(blob->surface) : std::span<const Fluid::SurfacePoint>{};
+				if (!Fluid::WrapSurface(field, particles[piece.seed].position, piece.extent + kernel, kThreshold, _directions, previous, _scratch)) {
+					PoseDrop(a_mount, *blob, piece.center, Fluid::VolumeRadius(piece.count, volume), up);
+					continue;
+				}
+				if (warm) {
+					for (std::size_t i = 0; i < _scratch.size(); ++i) {
+						auto&       current = blob->surface[i];
+						const auto& target = _scratch[i];
+						current.position = current.position + (target.position - current.position) * blend;
+						current.normal = Fluid::Normalize(current.normal + (target.normal - current.normal) * blend, target.normal);
+						current.distance = target.distance;
+					}
+				} else {
+					blob->surface = _scratch;
+				}
+				blob->seed = piece.seed;
+				blob->live = true;
+				PoseBlob(a_mount, *blob);
+			}
+		}
+		for (auto& hinted : hints) {
+			for (const auto b : hinted) {
+				if (std::ranges::find(claimed, b) == claimed.end()) {
+					a_cheek.blobs[b].used = false;
+					a_cheek.blobs[b].live = false;
+				}
+			}
+		}
+
+		std::size_t ropes = 0;
+		Fluid::FindRuns(particles, _runs);
+		for (const auto& run : _runs) {
+			const auto  held = std::ranges::find_if(a_cheek.anchors, [&](const Fluid::Anchor& a) { return a.particle + 1 == run.end; });
+			const auto* anchor = held != a_cheek.anchors.end() ? &*held : nullptr;
+			if (particles[run.begin].order > 0) {
+				// drops left on a trail are drawn by the trail pass below, plus a bead each
+				for (std::size_t i = run.begin; i < run.end; ++i) {
+					const auto& drop = particles[i];
+					droplets.push_back({ drop.position, Fluid::VolumeRadius(1, volume) * std::cbrt(field.Weight(drop)), drop.velocity, contactOf({ &i, 1 }) });
+				}
+				continue;
+			}
+			if (run.Size() >= 2 || anchor) {
+				if (Rope* rope = AcquireRope(a_cheek)) {
+					PoseRope(a_mount, a_cheek, *rope, run.begin, run.end, anchor, a_settings.trail, a_settings.fade);
+					++ropes;
+				}
+				continue;
+			}
+			const auto& single = particles[run.begin];
+			if (field.BulkCount(single.position) > kCovered) {
+				continue;
+			}
+			const std::size_t index = run.begin;
+			droplets.push_back({ single.position, Fluid::VolumeRadius(1, volume) * std::cbrt(field.Weight(single)), single.velocity,
+				contactOf({ &index, 1 }) });
+		}
+		// A welling tear hangs from the lid on one rope, from its newest particle to
+		// the seat. Its other leashes are not drawn: stacked translucent tubes at one
+		// spot blend into an opaque dark lump.
+		const Fluid::Anchor* newest = nullptr;
+		for (const auto& anchor : a_cheek.anchors) {
+			if (anchor.particle < particles.size() && particles[anchor.particle].bulk && (!newest || anchor.particle > newest->particle)) {
+				newest = &anchor;
+			}
+		}
+		if (newest && Fluid::Length(particles[newest->particle].position - newest->point) > 1.5f * spacing) {
+			if (Rope* rope = AcquireRope(a_cheek)) {
+				PoseRope(a_mount, a_cheek, *rope, newest->particle, newest->particle + 1, newest, a_settings.trail, a_settings.fade);
+				++ropes;
+			}
+		}
+		// The trail a tear left behind: the drops it deposited, in the order it left
+		// them, and the bead itself while it still runs, as one rope down the cheek.
+		for (std::size_t begin = 0; begin < particles.size();) {
+			std::size_t end = begin + 1;
+			while (end < particles.size() && particles[end].run == particles[begin].run) {
+				++end;
+			}
+			auto& trail = _trail;
+			trail.clear();
+			Vec3        beadSum{};
+			float       beadLife = 0.0f;
+			std::size_t bead = 0;
+			for (std::size_t i = begin; i < end; ++i) {
+				const auto& particle = particles[i];
+				if (particle.order > 0) {
+					trail.push_back(i);
+				} else if (particle.touching || particle.airborne < kTipGrace) {
+					// what is left of the bead on the skin, running or come to rest; a
+					// piece falling off the face is drawn as a drop, not as rope through the air
+					beadSum += particle.position;
+					beadLife += particle.life;
+					++bead;
+				}
+			}
+			// the streak starts at the lid, where the tear welled
+			const std::optional<Spot>& origin = a_spots[particles[begin].stream];
+			if (trail.size() + (bead ? 1 : 0) + (origin ? 1 : 0) >= 2 && (trail.size() + (bead ? 1 : 0)) >= 1) {
+				std::ranges::sort(trail, [&](std::size_t a_lhs, std::size_t a_rhs) { return particles[a_lhs].order < particles[a_rhs].order; });
+				_ropePoints.clear();
+				if (origin) {
+					Fluid::Particle lid = particles[trail.empty() ? begin : trail.front()];
+					lid.position = LidPoint(*origin, particles[begin].start) + origin->normal * (0.6f * spacing);
+					_ropePoints.push_back(lid);
+				}
+				for (const auto i : trail) {
+					_ropePoints.push_back(particles[i]);
+				}
+				if (bead) {
+					Fluid::Particle tip = _ropePoints.back();
+					tip.position = beadSum * (1.0f / static_cast<float>(bead));
+					tip.life = beadLife / static_cast<float>(bead);
+					_ropePoints.push_back(tip);
+				}
+				if (Rope* rope = AcquireRope(a_cheek)) {
+					PoseRopeFrom(a_mount, a_cheek, *rope, nullptr, a_settings.trail, a_settings.fade);
+					++ropes;
+				}
+			}
+			begin = end;
+		}
+		for (const auto& droplet : droplets) {
+			if (droplet.radius <= 0.0f) {
+				continue;
+			}
+			if (Blob* blob = AcquireBlob(a_cheek)) {
+				PoseDrop(a_mount, *blob, droplet.center, droplet.radius, up, droplet.velocity, droplet.contact);
+			}
+		}
+		if (a_markers) {
+			for (const auto& spot : a_spots) {
+				if (!spot) {
+					continue;
+				}
+				if (Blob* blob = AcquireBlob(a_cheek)) {
+					PoseDrop(a_mount, *blob, spot->point, kMarkerRadius / a_mount.frame->unit, up);
+				}
+			}
+		}
+
+		DrawStains(a_cheek, a_mount, a_settings, a_spots, a_lids);
+
+		std::size_t blobs = 0;
+		for (auto& blob : a_cheek.blobs) {
+			if (blob.used) {
+				++blobs;
+				Reveal(blob.dismember.get());
+			} else {
+				blob.live = false;
+				blob.root->SetAppCulled(true);
+			}
+		}
+		for (auto& rope : a_cheek.ropes) {
+			if (rope.used) {
+				Reveal(rope.dismember.get());
+			} else {
+				rope.root->SetAppCulled(true);
+			}
+		}
+		if (a_markers && a_settings.opacity < kMarkerOpacity) {
+			// at a faint opacity the probe would not show; the next draw without
+			// markers finds the opacity changed and shades the tears back
+			Settings look = a_settings;
+			look.opacity = kMarkerOpacity;
+			Reshade(a_cheek, look);
+		} else {
+			Reshade(a_cheek, a_settings);
+		}
+		RE::NiUpdateData update{};
+		a_cheek.root->Update(update);
+		a_cheek.shownBlobs = blobs;
+		a_cheek.shownRopes = ropes;
+		a_cheek.dirty = false;
+	}
+
+	// ------------------------------------------------------------------- status
+
+	std::string Milk::Describe(RE::Actor* a_actor, const Crier* a_crier, const Settings& a_settings) const
+	{
+		std::string text = NameOf(a_actor) + ": ";
+		if (!a_settings.enabled) {
+			text += "The milk leak is off. ";
+		}
+		if (a_crier && a_crier->crying) {
+			text += a_crier->forever ? std::format("leaking at {:.2f} until stopped. ", a_crier->target) :
+			                           std::format("leaking at {:.2f}, {:.0f}s left. ", a_crier->target, std::max(a_crier->timeLeft, 0.0f));
+		} else {
+			text += "not leaking. ";
+		}
+		if (a_crier) {
+			static constexpr std::array kNames{ "left", "right" };
+			for (std::size_t e = 0; e < Body::kEyes; ++e) {
+				const auto& cheek = a_crier->cheeks[e];
+				std::size_t asleep = 0;
+				for (const auto& particle : cheek.particles) {
+					asleep += particle.asleep ? 1 : 0;
+				}
+				text += std::format("{} breast: {} particles ({} at rest), {} trails, {} drops{}{}; so far {} emitted, {} cut falling, "
+				                    "{} taken by a hand, {} expired; skin under the fluid {} of {} posed, {} steps. ",
+					kNames[e], cheek.particles.size(), asleep, cheek.shownRopes, cheek.shownBlobs, cheek.shownStains ? " (marks)" : "", cheek.sheds ? "" : ", not leaking",
+					cheek.emitted, cheek.cutFalling, cheek.cutByHand, cheek.expired, cheek.lastPatches, cheek.lastPosed, cheek.lastSteps);
+			}
+			text += a_settings.mountWorld ? "Drawn in world space under the cell node (mount_world). " : "Drawn under each breast's bone. ";
+			if (a_crier->frozen) {
+				text += "Paused: out of sight or too far from the camera. ";
+			}
+			for (std::size_t e = 0; e < Body::kEyes; ++e) {
+				const auto* anchor = a_crier->anchors[e].get();
+				const char* name = anchor ? anchor->name.c_str() : nullptr;
+				text += std::format("{} fluid rides {}. ", kNames[e], name && *name ? name : "nothing yet (first update pending)");
+			}
+			// Where the first drawn drop actually is, for a "nothing shows" report.
+			for (std::size_t e = 0; e < Body::kEyes; ++e) {
+				const auto& cheek = a_crier->cheeks[e];
+				const auto drawn = std::ranges::find_if(cheek.blobs, [](const Blob& a_blob) { return a_blob.used && a_blob.root && !a_blob.bones.empty(); });
+				if (drawn == cheek.blobs.end()) {
+					continue;
+				}
+				const auto& bone = drawn->bones.front()->world.translate;
+				const auto& head = a_crier->frames[e].origin;
+				bool        culled = false;
+				for (const RE::NiAVObject* node = drawn->root.get(); node; node = node->parent) {
+					culled = culled || node->GetAppCulled();
+				}
+				text += std::format("A drop is drawn at ({:.0f}, {:.0f}, {:.0f}), {:.1f} units from its bone, {}, {}. ", bone.x, bone.y, bone.z,
+					bone.GetDistance(head), culled ? "culled somewhere up its tree" : "not culled",
+					drawn->dismember ? "with a dismember skin (old mesh)" : "plain skin");
+				break;
+			}
+		}
+		if (!a_settings.enabled) {
+			return text;
+		}
+		if (a_actor && a_actor->Get3D(false)) {
+			text += "Body: " + Clean(Body::Describe(a_actor, PlacementOf(a_settings, a_crier ? a_crier->streams : 0)));
+		} else {
+			text += "No 3D loaded.";
+		}
+		if (_meshes.failed) {
+			text += " The milk meshes did not load; see OninusLactis.log.";
+		} else if (_meshes.stainFailed) {
+			text += "";
+		}
+		return text;
+	}
+
+	void Milk::RefreshStatus(const Settings& a_settings)
+	{
+		const auto                 now = std::chrono::steady_clock::now();
+		std::vector<std::uint32_t> wanted;
+		bool                       missing = false;
+		{
+			std::scoped_lock guard(_lock);
+			std::erase_if(_wanted, [&](const auto& a_entry) { return now - a_entry.second > kStatusWanted; });
+			std::erase_if(_statuses, [&](const auto& a_entry) { return !_wanted.contains(a_entry.first); });
+			for (const auto& [key, at] : _wanted) {
+				wanted.push_back(key);
+				missing = missing || !_statuses.contains(key);
+			}
+		}
+		if (wanted.empty() || (!missing && now - _statusAt < kStatusEvery)) {
+			return;
+		}
+		_statusAt = now;
+		std::vector<std::pair<std::uint32_t, std::string>> texts;
+		for (const auto key : wanted) {
+			const auto actor = RE::Actor::LookupByHandle(key);
+			const auto crier = _criers.find(key);
+			texts.emplace_back(key, actor ? Describe(actor.get(), crier != _criers.end() ? crier->second.get() : nullptr, a_settings) :
+			                                "That actor is gone.");
+		}
+		std::scoped_lock guard(_lock);
+		for (auto& [key, text] : texts) {
+			_statuses[key] = std::move(text);
+		}
+	}
+}

@@ -1,0 +1,110 @@
+# ConsoleUtil Extended (CUE) command config for the Oninus Lactis NG test harness.
+# Requires: ConsoleUtil Extended  https://www.nexusmods.com/skyrimspecialedition/mods/133569
+# Drops into Data\SKSE\CustomConsole\ ; maps console subcommands onto the global
+# functions in LactisTest.psc, by position: keep each sub's args in the order of
+# the function's parameters. Commands act on the console-selected actor (click one
+# with the console open), or on the player when none is selected.
+#
+# Usage in console:  OninusLactis leak 0.8 30     (or the alias)  lactis leak 0.8 30
+version: 1
+name: OninusLactis
+alias: lactis
+script: LactisTest
+help: Oninus Lactis NG test harness
+subs:
+  - name: leak
+    func: Leak
+    help: Make the target's nipples leak milk (seconds 0 = until stopped)
+    args:
+      - name: intensity
+        type: float
+        default: 0.7
+        help: 0.0 to 1.0, how often and how heavily they drip
+      - name: seconds
+        type: float
+        default: 30
+        help: How long to leak; 0 leaks until stopped
+  - name: stop
+    func: Stop
+    help: Stop the leak; the milk on the skin dries (wipe 1 removes it at once)
+    args:
+      - name: wipe
+        type: int
+        default: 0
+        help: 1 removes the milk at once
+  - name: drip
+    func: Drip
+    help: Let go of a single drop, even when not leaking
+    args:
+      - name: side
+        type: int
+        default: 2
+        help: 0 left, 1 right, 2 both, -1 random
+  - name: wipe
+    func: Wipe
+    help: Remove the milk on the target at once
+  - name: wipeall
+    func: WipeAll
+    help: Remove the milk on everyone
+  - name: nearby
+    func: Nearby
+    help: Make every actor near the player leak
+    args:
+      - name: radius
+        type: float
+        default: 1500
+        help: Game units around the player
+      - name: intensity
+        type: float
+        default: 0.7
+      - name: seconds
+        type: float
+        default: 30
+  - name: status
+    func: Status
+    help: What was found on the target's body (which mesh and bone gave each nipple) and the state of its milk
+  - name: enable
+    func: Enable
+    help: Turn the fluid leak on or off for this session
+    args:
+      - name: "on"
+        type: int
+        default: 1
+  - name: nipples
+    func: Nipples
+    help: Mark the nipples found on the target with a bead each
+    args:
+      - name: "on"
+        type: int
+        default: 1
+  - name: auto
+    func: AutoNipples
+    help: Squirt emitters on the nipples found (1) or at the MCM offsets (0), for this session
+    args:
+      - name: "on"
+        type: int
+        default: 1
+  - name: mount
+    func: Mount
+    help: Draw the milk under each breast's bone (0) or in world space (1)
+    args:
+      - name: world
+        type: int
+        default: 0
+  - name: reload
+    func: Reload
+    help: Read OninusLactis.toml again
+  - name: squirt
+    func: Squirt
+    help: Play the nipple squirt on the target
+    args:
+      - name: seconds
+        type: float
+        default: 10
+      - name: level
+        type: int
+        default: 1
+        help: 0 to 2
+  - name: stopsquirt
+    func: StopSquirt
+    help: Stop the nipple squirt on the target

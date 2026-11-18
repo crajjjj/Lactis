@@ -1,0 +1,58 @@
+# Oninus Lactis NG - the native half: the milk leak and the nipple search.
+#
+# These are the defaults. Don't edit this file to tune your game: use the Oninus
+# Lactis pages in the SKSE Menu Framework, which save only what you change into
+# OninusLactis_User.toml next to this file, or write that file by hand with the same
+# sections and keys. An update replaces this file and never touches yours.
+
+[general]
+enabled = true         # the fluid milk leak; off removes every drop and ignores new requests (the squirt is not affected)
+debug_log = false      # mesh, nipple and fluid details in OninusLactis.log, and the status line (what `lactis status` prints) when a leak starts and every 10 s while it lasts
+
+[leak]
+rate = 20.0            # drops per minute from each nipple at full intensity
+drop = 8               # fluid particles in one drop at full intensity (2 to 20)
+well = 0.8             # seconds a drop takes to gather at the nipple
+hold = 0.6             # seconds a full drop clings to the nipple before it runs
+variety = 0.4          # how much one drop differs from the next: where around the nipple it starts, its size, a second drop right after; 0 = all alike
+both_breasts = true    # false: one breast, picked at random each time a leak starts
+max_actors = 6         # actors leaking at once; the oldest stops past this
+max_particles = 200    # fluid on one breast at most
+max_distance = 3000    # game units from the camera; farther actors' milk pauses where it is (trails still dry)
+
+[look]
+style = 1              # 1 plain (lit like any surface, no glow, no reflection); 0 reflective (wet, reflects the surroundings); 2 refraction (plain + the scene bends through the fluid, experimental)
+refraction = 0.3       # in the refraction style, how strongly the scene behind bends through a drop
+size = 0.9             # drop size; smaller is subtler, bigger reads better from afar
+trail = 0.9            # width of the trail a drop leaves
+opacity = 0.75         # how much the milk hides the skin; lower for a thinner, watery look
+shine = 0.6            # strength of the wet highlight
+gloss = 80.0           # sharpness of the highlight
+reflection = 0.1       # reflective style: how much of the surroundings the fluid reflects; 0 is matte
+env_light_fade = true  # the reflection dims with the light on the body, so milk does not shine in a dark room
+glow = 0.0             # reflective style: a light of the fluid's own; milk needs none
+lifetime = 45.0        # seconds a trail stays on the skin
+fade = 6.0             # seconds at the end of its life a trail spends thinning out
+
+[physics]
+stickiness = 1.5       # how firmly a drop sticks to the skin; a full bead still runs, the thin trail behind it stops
+friction = 40.0        # drag on a drop running over skin; higher runs slower
+viscosity = 35.0       # how much a drop moves as one; milk is thicker than water
+cohesion = 3.0         # how strongly a drop holds together as a bead
+stretch = 3.0          # how easily a running drop stretches into a trail
+trail_step = 2.5       # a running drop leaves a bit behind every this many cm
+cling = 1.5            # seconds a drop hangs under the breast before it falls (a lone drop twice this, a heavy bead less)
+fall = 0.6             # seconds a drop that falls off the body stays visible
+
+[hands]
+hands = true           # the actor's own hands smear the milk they touch and take it away
+absorb = 0.3           # seconds a drop touched by a hand lasts
+
+[squirt]
+auto_nipples = true    # put the squirt emitters on the nipples found on the actor's own meshes, whatever the body, preset or morphs; false uses the MCM offsets
+lift = 0.1             # game units off the nipple, along its direction, where the squirt starts
+all_races = true       # every humanoid race can wear the squirt emitters, custom body races included, with no patch plugin (read at game start)
+
+[debug]
+show_nipples = false   # mark the nipples found on the console-selected actor, or the player (a bead each); that actor's milk draws at least 0.4 opaque meanwhile
+mount_world = false    # false: milk hangs under each breast's bone and rides it in the same frame; true: drawn in world space under the cell node, a frame behind a moving body

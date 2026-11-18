@@ -1,0 +1,38 @@
+<?xml version='1.0'?>
+<PapyrusProject xmlns="PapyrusProject.xsd"
+    Flags="TESV_Papyrus_Flags.flg"
+    Game="sse"
+    Output="dist\Scripts"
+    Optimize="false"
+    Release="false"
+    Zip="true"
+    Package="false"
+    Final="false">
+    <Variables>
+        <Variable Name="ModName" Value="OninusLactisNG" />
+        <Variable Name="ModsFolder" Value="C:\Playground\Skyrim\mods" />
+    </Variables>
+    <Imports>
+        <Import>.\papyrus\Source</Import>
+        <Import>C:\SteamLibrary\steamapps\common\Skyrim Special Edition\Data\Source\Scripts</Import>
+    </Imports>
+    <Folders>
+        <Folder>.\papyrus\Source</Folder>
+    </Folders>
+    <!-- Every pyro run refreshes the installable archive; `xmake build release`
+         rebuilds the DLL first. The plugin (original slots 58/59; the 56/60 one for
+         Devious Devices setups sits under Optional), DLL + config + console harness,
+         scripts, translations, the squirt and milk meshes and textures. -->
+    <ZipFiles Output=".\Release">
+        <ZipFile Name="@ModName" RootDir=".\dist" Compression="deflate">
+            <Include>OninusLactis.esp</Include>
+            <Match In="Scripts">*.pex</Match>
+            <Match In="Scripts\Source">*.psc</Match>
+            <Match In="SKSE">*.*</Match>
+            <Match In="Interface">*.*</Match>
+            <Match In="meshes">*.*</Match>
+            <Match In="textures">*.*</Match>
+            <Match In="Optional">*.*</Match>
+        </ZipFile>
+    </ZipFiles>
+</PapyrusProject>

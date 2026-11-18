@@ -1,0 +1,30 @@
+# build
+.xmake/
+build/
+vsxmakefiles/
+compile_commands.json
+.vs/
+.cache/
+
+# generated: DLL from xmake, pex + psc mirror from Pyro
+dist/**
+!dist/OninusLactis.esp
+!dist/SKSE/
+!dist/SKSE/Plugins/
+!dist/SKSE/Plugins/OninusLactis.toml
+!dist/SKSE/CustomConsole/
+!dist/SKSE/CustomConsole/*.yaml
+!dist/meshes/
+!dist/meshes/**
+!dist/textures/
+!dist/textures/**
+
+Release/
+__pycache__/
+
+# local build notes
+build_cfg.log
+!dist/Interface/
+!dist/Interface/**
+!dist/Optional/
+!dist/Optional/**
