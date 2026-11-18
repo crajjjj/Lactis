@@ -9,8 +9,9 @@ drive. 2.2 adds a native plugin (`OninusLactis.dll`) to the 2.1 scripts:
   fallback for an actor on whom nothing is found.
 - **A fluid milk leak.** Drops well up at the nipples, cling, run down the skin and
   drip off. It is simulated fluid lying on the actor's own surface, so it needs no
-  body-specific texture. The old overlay leak (an effect shader painted for one UV
-  layout) is still there as an option.
+  body-specific texture. The old overlay leak (an effect shader painted for a UV
+  layout) is still there as an option, now with a texture for the UBE body as well
+  as CBBE / 3BA, picked per actor by race.
 - **Every humanoid race can wear the effect**, custom body races included, with no
   patch plugin.
 - Fixes to the 2.1 scripts (below).
@@ -140,6 +141,8 @@ swaps in its own overlay does not end the fluid leak.
   `Release\OninusLactisNG-<version>.zip`. `xmake build release` rebuilds the DLL first.
 - `python tools/make_milk.py` regenerates the milk meshes and textures.
 - `python tools/nipple_check.py <mesh.nif>` runs the nipple rule on a nif file.
+- `python tools/make_ube_leak.py` repaints the overlay leak texture for the UBE body;
+  `python tools/add_ube_leak_shader.py` adds its effect shader to both plugins.
 
 ## Credits and license
 

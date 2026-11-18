@@ -39,6 +39,13 @@ projects import from: do not turn it into this project).
 - `python tools/add_translations.py dist/Interface/Translations`: appends new `$OL_`
   keys to all eleven files (UTF-16 LE with BOM; English text in every language).
 - `python tools/nipple_check.py <mesh.nif>`: the nipple rule of `Body.cpp`, offline.
+- `python tools/make_ube_leak.py`: `dist\textures\lactis\Milk_Leaking_UBE.dds`, the
+  overlay leak repainted for the UBE UV layout (closest point on the 3BA body, shifted
+  nipple onto nipple by the `nipple_check` rule; bodies read from nefaram).
+  `python tools/add_ube_leak_shader.py` then (re)writes EFSH `LactisNippleLeakUBE`
+  `0xD70` into BOTH plugins (a copy of `0xD69` with that texture). Known: an effect
+  shader also draws through the head's UVs; the UBE texture's paint falls on the UBE
+  head's left jaw, the stock one under the lower lip of any head.
 - Version: `xmake.lua` `PROJECT_VERSION` and `papyrus\Source\LactisVersion.psc`
   (`GetVersion()` packed `major*10000 + minor*100 + patch`, 2.2.0 = 20200, and
   `GetVersionString()`). The MCM's `GetVersion()` delegates to it, so a bump runs the
@@ -46,7 +53,10 @@ projects import from: do not turn it into this project).
   registered 2). `OninusLactis.psc` sets `fVersion` from it on every load.
 - `dist\OninusLactis.esp` is 2.1's original-slot plugin, unchanged;
   `dist\Optional\...\OninusLactis.esp` the 56/60 one. Form IDs the code uses: quest
-  `0xD61`, armor `0xD6B`, armor addons `0xD6A` / `0xD6C`, overlay shader `0xD69`.
+  `0xD61`, armor `0xD6B`, armor addons `0xD6A` / `0xD6C`, overlay shader `0xD69`
+  (CBBE layout) and `0xD70` (UBE layout, since 2.2.1; the script looks it up with
+  `GetFormFromFile` and plays it when the race editor ID contains `UBE_`). The two
+  plugins differ only in the armor slots; keep every other record identical.
 
 ## Vocabulary
 

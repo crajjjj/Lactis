@@ -98,6 +98,10 @@ ObjectReference[] armorRefsLeft
 Actor[] ownLeakActors
 Float[] ownLeakUntil
 
+; The overlay leak in the UBE body's UV layout (EFSH 0xD70, added in 2.2.1). Looked
+; up on every load, as no property of a 2.1 save could hold it.
+EffectShader UBENippleLeak
+
 ; Helper function for logging that can be toggled in MCM
 Function Log(string a_message)
   if DebugLoggingEnabled
@@ -137,6 +141,7 @@ Function Maintenance()
   ; a load ends every fluid leak, so the record of other mods' leaks starts empty
   ownLeakActors = new Actor[20]
   ownLeakUntil = new Float[20]
+  UBENippleLeak = Game.GetFormFromFile(0xD70, "OninusLactis.esp") as EffectShader
   CleanupAllArrays()
   if !QueuedStopActors
     QueuedStopActors = new Actor[20]
@@ -787,22 +792,36 @@ bool Function HasOwnLeak(Actor actorRef)
   return true
 EndFunction
 
-; The overlay leak (an effect shader drawn through the body's UVs; its texture is
-; painted for the CBBE layout).
+; The overlay leak: an effect shader drawn through the body's UVs, so its texture is
+; painted for one UV layout. CBBE (and 3BA) by default, the UBE one on a UBE race.
 Function StartNippleLeak(Actor actorRef, int duration)
-  if !actorRef || !LactisNippleLeakCBBE
+  EffectShader shader = NippleLeakShaderFor(actorRef)
+  if !actorRef || !shader
     return
   endif
-  LactisNippleLeakCBBE.play(actorRef, duration)
+  shader.Play(actorRef, duration)
 EndFunction
 
 ; Stops the overlay leak only, as it always did: other mods call this to put their
 ; own overlay in its place, and must not end the fluid leak by it.
 Function StopNippleLeak(Actor actorRef)
-  if !actorRef || !LactisNippleLeakCBBE
+  if !actorRef
     return
   endif
-  LactisNippleLeakCBBE.Stop(actorRef)
+  if LactisNippleLeakCBBE
+    LactisNippleLeakCBBE.Stop(actorRef)
+  endif
+  if UBENippleLeak
+    UBENippleLeak.Stop(actorRef)
+  endif
+EndFunction
+
+; Every UBE race's editor ID has "UBE_" in it (00UBE_NordRace and so on).
+EffectShader Function NippleLeakShaderFor(Actor actorRef)
+  if UBENippleLeak && actorRef && StringUtil.Find(MiscUtil.GetActorRaceEditorID(actorRef), "UBE_") >= 0
+    return UBENippleLeak
+  endif
+  return LactisNippleLeakCBBE
 EndFunction
 
 ; Stops both kinds of leak. The fluid already on the skin runs its course and dries.
