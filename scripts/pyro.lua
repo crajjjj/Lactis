@@ -35,6 +35,15 @@ function main()
     os.cp(path.join(os.projectdir(), "LICENSE"), path.join(plugins, "OninusLactis-LICENSE.txt"))
     os.cp(path.join(os.projectdir(), "NOTICE.txt"), path.join(plugins, "OninusLactis-NOTICE.txt"))
 
+    -- the installer (fomod\ in the repo), with the version stamped into info.xml
+    local fomod_out = path.join(os.projectdir(), "dist", "fomod")
+    if not os.isdir(fomod_out) then
+        os.mkdir(fomod_out)
+    end
+    os.cp(path.join(os.projectdir(), "fomod", "ModuleConfig.xml"), fomod_out)
+    local info = io.readfile(path.join(os.projectdir(), "fomod", "info.xml"))
+    io.writefile(path.join(fomod_out, "info.xml"), (info:gsub("@VERSION@", project.version())))
+
     os.execv(pyro, {
         "-i", path.join(os.projectdir(), "OninusLactis.ppj"),
         "--game-path", game

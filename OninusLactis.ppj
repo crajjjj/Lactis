@@ -22,10 +22,12 @@
     <!-- Every pyro run refreshes the installable archive; `xmake build release`
          rebuilds the DLL first. The plugin (original slots 58/59; the 56/60 one for
          Devious Devices setups sits under Optional), DLL + config + console harness,
-         scripts, translations, the squirt and milk meshes and textures. -->
+         scripts, translations, the squirt and milk meshes and textures, and the FOMOD
+         installer (dist\fomod, written by scripts\pyro.lua) that picks the plugin. -->
     <ZipFiles Output=".\Release">
         <ZipFile Name="@ModName" RootDir=".\dist" Compression="deflate">
             <Include>OninusLactis.esp</Include>
+            <Match In="fomod">*.xml</Match>
             <Match In="Scripts">*.pex</Match>
             <Match In="Scripts\Source">*.psc</Match>
             <Match In="SKSE">*.*</Match>

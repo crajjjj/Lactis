@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<fomod>
+  <Name>Oninus Lactis NG</Name>
+  <Author>Orbus Ninus, crajjjj</Author>
+  <!-- @VERSION@ is filled in from PROJECT_VERSION in xmake.lua by scripts\pyro.lua -->
+  <Version MachineVersion="@VERSION@">@VERSION@</Version>
+  <Website>https://github.com/crajjjj/Lactis</Website>
+  <Description>
+    Nipple squirt and milk leak effects, with an API other mods use. The squirt comes
+    from the nipples found on whatever body and outfit the actor wears, the fluid milk
+    leak runs down any body, and every humanoid race (UBE included) can wear the effect.
+
+    The installer asks which body slots the squirt should use: 58 and 59 (default), or
+    56 and 60 for setups where those are taken, such as Devious Devices.
+  </Description>
+  <Groups>
+    <element>Animation - Sex</element>
+    <element>Visuals and Graphics</element>
+  </Groups>
+</fomod>

@@ -32,7 +32,12 @@ projects import from: do not turn it into this project).
   folder. `xmake.lua` overrides `on_install` with nothing; keep that.
 - `xmake build papyrus`: Pyro compiles `papyrus\Source` into `dist\Scripts` and writes
   `Release\OninusLactisNG-<version>.zip` (the `dist` tree). Imports come from the
-  game's `Data\Source\Scripts` (SkyUI SDK, PapyrusUtil, SKSE are there).
+  game's `Data\Source\Scripts` (SkyUI SDK, PapyrusUtil, SKSE are there). The archive
+  is a Data-layout tree plus a FOMOD: `scripts\pyro.lua` copies `fomod\` into
+  `dist\fomod` and stamps `@VERSION@` in `info.xml` from `PROJECT_VERSION`. The
+  installer takes the five Data folders whole and asks for the plugin (root = slots
+  58/59, `Optional\...` = 56/60); a new top-level Data folder needs a line in both
+  `ModuleConfig.xml` and the ppj's `<ZipFiles>`.
 - `python tools/make_milk.py`: `dist\meshes\OninusLactis\milk_*.nif` and
   `dist\textures\lactis\milk*.dds`. Bone names `BlobNN` / `RopeNN` and the rope bone
   count are shared with `src/Milk.cpp`.

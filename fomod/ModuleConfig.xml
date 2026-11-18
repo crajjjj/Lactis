@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+
+  <moduleName>Oninus Lactis NG</moduleName>
+
+  <!-- The archive is laid out as a Data folder, so a manual install still works (it
+       takes the plugin at the root, slots 58 and 59). The installer takes everything but
+       the plugin, then the plugin for the slots chosen. -->
+  <requiredInstallFiles>
+    <folder source="Scripts" destination="Scripts" priority="0" />
+    <folder source="SKSE" destination="SKSE" priority="0" />
+    <folder source="Interface" destination="Interface" priority="0" />
+    <folder source="meshes" destination="meshes" priority="0" />
+    <folder source="textures" destination="textures" priority="0" />
+  </requiredInstallFiles>
+
+  <installSteps order="Explicit">
+    <installStep name="Armor slots">
+      <optionalFileGroups order="Explicit">
+        <group name="Which body slots should the squirt use?" type="SelectExactlyOne">
+          <plugins order="Explicit">
+
+            <plugin name="Slots 58 and 59 (default)">
+              <description>
+The squirt is worn as an invisible armor piece in body slots 58 and 59, as in every
+earlier version of Oninus Lactis.
+
+Choose this unless something else you wear uses slot 58 or 59: one slot holds one item,
+so the squirt would take that item off while it plays.
+              </description>
+              <files>
+                <file source="OninusLactis.esp" destination="OninusLactis.esp" priority="0" />
+              </files>
+              <typeDescriptor>
+                <type name="Recommended" />
+              </typeDescriptor>
+            </plugin>
+
+            <plugin name="Slots 56 and 60 (Devious Devices)">
+              <description>
+The same plugin with the squirt moved to body slots 56 and 60, for setups where 58 or 59
+are taken, such as Devious Devices: there the squirt would take a device off.
+
+To switch later, run the installer again and pick the other option.
+              </description>
+              <files>
+                <file source="Optional\Alternative slots 56-60 (DD compatible)\OninusLactis.esp" destination="OninusLactis.esp" priority="0" />
+              </files>
+              <typeDescriptor>
+                <type name="Optional" />
+              </typeDescriptor>
+            </plugin>
+
+          </plugins>
+        </group>
+      </optionalFileGroups>
+    </installStep>
+  </installSteps>
+</config>

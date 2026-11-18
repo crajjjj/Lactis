@@ -27,9 +27,14 @@ Without `OninusLactis.dll` the scripts behave as 2.1 did: fixed offsets, overlay
 
 ## Install
 
-Install with a mod manager, replacing 2.1. The archive holds the plugin for the
-original slots (58/59). For a setup where those slots are taken (Devious Devices),
-use `Optional\Alternative slots 56-60 (DD compatible)\OninusLactis.esp` instead.
+Install with a mod manager, replacing 2.1. The installer asks which body slots the
+squirt uses: it is worn as an invisible armor piece, and one slot holds one item, so it
+must not share a slot with something else you wear. The default is 58 and 59; pick 56
+and 60 when those are taken, as in a Devious Devices setup.
+
+Installing by hand (no installer): the plugin at the archive's root uses 58 and 59;
+`Optional\Alternative slots 56-60 (DD compatible)\OninusLactis.esp` is the 56 and 60
+one. Copy everything else as it is.
 
 Updating a save from 2.1 is fine. The fluid leak is on by default.
 
