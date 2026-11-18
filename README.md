@@ -83,7 +83,8 @@ clothes as before, turn off `Squirt > Not through clothes` in the SKSE Menu Fram
 
 A separate add-on, `LactisMME-<version>.zip` on the release page (source in
 `addons\MME`), brings Oninus Lactis to Milk Mod Economy: milking makes the maid squirt,
-and a maid whose breasts are full leaks. See `addons\MME\README.md`.
+and a maid whose breasts are full leaks a little now and then. See
+`addons\MME\README.md`.
 
 ## Console (ConsoleUtil Extended)
 

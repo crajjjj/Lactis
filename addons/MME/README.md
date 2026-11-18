@@ -4,9 +4,11 @@ A small add-on that brings Oninus Lactis NG to Milk Mod Economy:
 
 - **Milking squirts.** Every milking stage makes the maid squirt: level 2 when she is
   aroused past 75, level 1 otherwise. The squirt stops when the machine lets go.
-- **Full breasts leak.** While a maid near the player has her milk at her maximum, her
-  nipples leak (checked every 10 seconds). The leak runs out once she is no longer
-  full.
+- **Full breasts leak, now and then.** Each time Milk Mod Economy's milk cycle runs
+  (every MilkPoll game hours, 1 by default, about 3 minutes of play) and finds a maid
+  near the player full, her nipples give a short, light leak of 20 seconds, as Milk Mod
+  Economy's own leak does. Never more than one burst per maid in 90 seconds, however
+  fast the cycle is set or however long you wait or sleep. The player is included.
 
 ## Requirements
 
@@ -28,9 +30,16 @@ of Milk Mod Economy's menu if you want only Lactis's.
 
 `LactisMME.esp` holds one quest that starts with the game and carries the script
 `LactisMME.psc`. The script listens for Milk Mod Economy's `MilkQuest.MilkingStage` and
-`MilkQuest.StopMilkingMachine` events and sends Oninus Lactis's `OLactis.Lactating`. For
-the leak it reads the milk level Milk Mod Economy keeps on each maid (the StorageUtil
-values `MME.MilkMaid.MilkCount` and `MME.MilkMaid.MilkMaximum`) and sends `OLactis.Leak`.
+`MilkQuest.StopMilkingMachine` events and sends Oninus Lactis's `OLactis.Lactating`. On
+Milk Mod Economy's `MME_MilkCycleComplete` it reads the milk level Milk Mod Economy keeps
+on each maid nearby (the StorageUtil values `MME.MilkMaid.MilkCount` and
+`MME.MilkMaid.MilkMaximum`) and sends `OLactis.Leak` for the full ones.
+
+## Changes
+
+- 1.0.1: a full maid leaks in short bursts on Milk Mod Economy's milk cycle, not all
+  the time. Saves with 1.0.0 switch over by themselves.
+- 1.0.0: first release.
 
 ## Building
 

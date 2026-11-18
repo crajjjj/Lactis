@@ -4,7 +4,7 @@
 -- number, attached to the Oninus Lactis release it was made for.
 -- Overrides: PYRO_EXE (pyro.exe path), SKYRIM_GAME_PATH (game root).
 
-local ADDON_VERSION = "1.0.0"
+local ADDON_VERSION = "1.0.1"
 
 function main()
     local pyro = os.getenv("PYRO_EXE")

@@ -74,8 +74,10 @@ projects import from: do not turn it into this project).
   (`housecarl_create_plugin` + `housecarl_create`; houseCARL writes into nefaram2's
   mods folder, so copy the file out). The script reaches Lactis only through
   `OLactis.Lactating` / `OLactis.Leak`, and MME only through its `MilkQuest.MilkingStage`
-  / `MilkQuest.StopMilkingMachine` events and the StorageUtil keys
-  `MME.MilkMaid.MilkMaximum` / `MME.MilkMaid.MilkCount`. Never call MME's
+  / `MilkQuest.StopMilkingMachine` / `MME_MilkCycleComplete` events and the
+  StorageUtil keys `MME.MilkMaid.MilkMaximum` / `MME.MilkMaid.MilkCount`. The leak is a
+  20 s light burst per MME milk cycle that finds a maid full (at most one per 90 s per
+  actor), as MME's own leak: 1.0.0's constant leak was too much. Never call MME's
   `MME_Storage.getMilkMaximum` on an arbitrary actor: on a non-maid it writes a
   default value onto the actor and logs a line. `kVersion` in the script re-runs its
   `Maintenance` on saves that already run the quest.
