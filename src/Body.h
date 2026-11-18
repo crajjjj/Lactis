@@ -93,6 +93,10 @@ namespace Lactis::Body
 	// One line about what was found on the actor, for the status command.
 	std::string Describe(RE::Actor* a_actor, const Placement& a_placement);
 
+	// The actor's name for a log line, never null: the game's getter returns null for
+	// a nameless actor, and formatting a null char* crashes.
+	std::string ActorName(RE::Actor* a_actor);
+
 	// The bone the fluid falls back to when a side has no breast bone.
 	constexpr const char* kHeadBone = "NPC Spine2 [Spn2]";
 

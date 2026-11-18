@@ -13,7 +13,10 @@ namespace Lactis::Squirt
 		constexpr std::array  kAxes{ "Lactis Axis L", "Lactis Axis R" };
 		constexpr float       kAxisScale = 0.25f;
 		constexpr float       kEvery = 0.5f;    // seconds between placements of one actor
-		constexpr float       kGiveUp = 8.0f;   // seconds without the meshes after which the actor is forgotten
+		// Seconds with the actor's 3D loaded but no emitter nodes on it, after which the
+		// actor is forgotten (the armor came off without a Forget). Time with no 3D at
+		// all (out of range) does not count: the nodes come back with it.
+		constexpr float kGiveUp = 8.0f;
 
 		struct Emitters
 		{
@@ -27,9 +30,24 @@ namespace Lactis::Squirt
 			bool                 logged{ false };
 		};
 
+		// Place and Forget in the order they were asked: an old armor's Forget that
+		// came before the new armor's Place must not erase it.
+		struct Request
+		{
+			bool     forget{ false };
+			Emitters emitters;
+		};
+
+		enum class Found
+		{
+			kPlaced,
+			kNoNodes,  // 3D loaded, no emitter groups on it
+			kNo3D,     // not loaded: wait for it
+			kGone      // the actor no longer exists
+		};
+
 		std::mutex                                 lock;
-		std::vector<Emitters>                      pending;
-		std::vector<std::uint32_t>                 dropped;
+		std::vector<Request>                       requests;
 		std::unordered_map<std::uint32_t, Emitters> placed;  // main thread only
 		float                                      clock{ 0.0f };
 
@@ -39,13 +57,15 @@ namespace Lactis::Squirt
 			a_node->Update(data);
 		}
 
-		// True when at least one emitter group was there to place.
-		bool PlaceNow(Emitters& a_emitters, const Settings& a_settings)
+		Found PlaceNow(Emitters& a_emitters, const Settings& a_settings)
 		{
 			const auto actor = a_emitters.actor.get();
-			auto*      root = actor ? actor->Get3D(false) : nullptr;
+			if (!actor) {
+				return Found::kGone;
+			}
+			auto* root = actor->Get3D(false);
 			if (!root) {
-				return false;
+				return Found::kNo3D;
 			}
 			bool any = false;
 			for (std::size_t side = 0; side < Body::kEyes; ++side) {
@@ -70,13 +90,13 @@ namespace Lactis::Squirt
 				Refresh(group);
 				if (!a_emitters.logged && a_settings.debugLog) {
 					const auto& at = group->local.translate;
-					logger::info("{}: {} squirt emitter under \"{}\" at ({:.2f}, {:.2f}, {:.2f}), {}", actor->GetDisplayFullName(),
+					logger::info("{}: {} squirt emitter under \"{}\" at ({:.2f}, {:.2f}, {:.2f}), {}", Body::ActorName(actor.get()),
 						side == Body::kLeft ? "left" : "right", parent->name.c_str() ? parent->name.c_str() : "?", at.x, at.y, at.z,
 						found ? "on the nipple found" : (a_settings.autoNipples ? "at the MCM offset: no nipple found" : "at the MCM offset"));
 				}
 			}
 			a_emitters.logged = a_emitters.logged || any;
-			return any;
+			return any ? Found::kPlaced : Found::kNoNodes;
 		}
 	}
 
@@ -118,13 +138,14 @@ namespace Lactis::Squirt
 		if (!a_actor) {
 			return;
 		}
-		Emitters emitters;
-		emitters.actor = a_actor;
-		emitters.offset = a_offset;
-		emitters.scale = std::isfinite(a_scale) && a_scale > 0.0f ? a_scale : 1.0f;
-		emitters.axis = a_axis;
+		Request request;
+		request.emitters.actor = a_actor;
+		request.emitters.offset = a_offset;
+		// 0 hides the emitters, as the script's SetNodeScale did
+		request.emitters.scale = std::isfinite(a_scale) ? std::max(a_scale, 0.0f) : 1.0f;
+		request.emitters.axis = a_axis;
 		std::scoped_lock guard(lock);
-		pending.push_back(emitters);
+		requests.push_back(request);
 	}
 
 	void Forget(RE::ActorHandle a_actor)
@@ -132,8 +153,11 @@ namespace Lactis::Squirt
 		if (!a_actor) {
 			return;
 		}
+		Request request;
+		request.forget = true;
+		request.emitters.actor = a_actor;
 		std::scoped_lock guard(lock);
-		dropped.push_back(a_actor.native_handle());
+		requests.push_back(request);
 	}
 
 	void Update(float a_delta)
@@ -141,14 +165,15 @@ namespace Lactis::Squirt
 		clock += a_delta;
 		{
 			std::scoped_lock guard(lock);
-			for (auto& emitters : pending) {
-				placed[emitters.actor.native_handle()] = emitters;  // replaces an older request: place at once
+			for (const auto& request : requests) {
+				const auto key = request.emitters.actor.native_handle();
+				if (request.forget) {
+					placed.erase(key);
+				} else {
+					placed[key] = request.emitters;  // replaces an older request: place at once
+				}
 			}
-			pending.clear();
-			for (const auto key : dropped) {
-				placed.erase(key);
-			}
-			dropped.clear();
+			requests.clear();
 		}
 		if (placed.empty()) {
 			return;
@@ -159,31 +184,50 @@ namespace Lactis::Squirt
 			// Every frame until the meshes attach (the equip is not instant), then at an
 			// easy pace: the nodes can come back under a new 3D, and a morph can move
 			// the nipple.
-			if (emitters.placed && clock < emitters.next) {
+			if (clock < emitters.next) {
 				++it;
 				continue;
 			}
-			if (PlaceNow(emitters, settings)) {
+			switch (PlaceNow(emitters, settings)) {
+			case Found::kPlaced:
 				emitters.placed = true;
 				emitters.missing = 0.0f;
 				emitters.next = clock + kEvery;
-			} else {
+				break;
+			case Found::kNo3D:
 				emitters.placed = false;
-				emitters.missing += a_delta;
+				emitters.next = clock + kEvery;
+				break;
+			case Found::kNoNodes:
+				emitters.placed = false;
+				emitters.missing += a_delta;  // looked for every frame from here
+				emitters.next = 0.0f;
 				if (emitters.missing > kGiveUp) {
 					it = placed.erase(it);
 					continue;
 				}
+				break;
+			case Found::kGone:
+				it = placed.erase(it);
+				continue;
 			}
 			++it;
+		}
+	}
+
+	void Rewind()
+	{
+		for (auto& [key, emitters] : placed) {
+			emitters.placed = false;
+			emitters.missing = 0.0f;
+			emitters.next = 0.0f;
 		}
 	}
 
 	void Reset()
 	{
 		std::scoped_lock guard(lock);
-		pending.clear();
-		dropped.clear();
+		requests.clear();
 		placed.clear();
 	}
 }

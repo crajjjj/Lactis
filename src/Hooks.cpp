@@ -61,7 +61,7 @@ namespace Lactis::Hooks
 				const bool editingBody = ui && ui->IsMenuOpen(RE::RaceSexMenu::MENU_NAME);
 				if (editingBody != _editingBody) {
 					_editingBody = editingBody;
-					ResetSession();
+					ResetBodies();
 				}
 				if (editingBody) {
 					return;
@@ -77,8 +77,18 @@ namespace Lactis::Hooks
 					Squirt::Update(delta);
 				} catch (const std::exception& error) {
 					logger::error("frame update failed, all milk dropped: {}", error.what());
-					ResetSession();
+					ResetBodies();
 				}
+			}
+
+			// The body changed (RaceMenu) or a frame failed: drop the milk and every
+			// cached body, but keep the squirt emitters asked for and place them again.
+			// Nothing outside a game load would ask for them a second time.
+			static void ResetBodies()
+			{
+				Milk::Get().Reset();
+				Body::Reset();
+				Squirt::Rewind();
 			}
 
 			std::atomic<std::uint64_t> _frame{ 0 };

@@ -2972,8 +2972,6 @@ namespace Lactis
 		}
 		if (_meshes.failed) {
 			text += " The milk meshes did not load; see OninusLactis.log.";
-		} else if (_meshes.stainFailed) {
-			text += "";
 		}
 		return text;
 	}

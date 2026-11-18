@@ -12,7 +12,8 @@ namespace Lactis::Squirt
 	// (UBE and the like) needs no patch plugin. Call at kDataLoaded.
 	void PatchRaces();
 
-	// Asks for a_actor's emitters to be placed, and kept placed while they exist.
+	// Asks for a_actor's emitters to be placed, and kept placed while they exist
+	// (again after the actor's 3D unloads and comes back).
 	// a_offset is the left emitter's place in its bone's space (x mirrored for the
 	// right), used when the nipples are not to be found ([squirt] auto_nipples off, or
 	// nothing on the actor answers); a_scale the emitters' size; a_axis shows the debug
@@ -20,11 +21,17 @@ namespace Lactis::Squirt
 	// that has not attached yet is waited for.
 	void Place(RE::ActorHandle a_actor, const std::array<float, 3>& a_offset, float a_scale, bool a_axis);
 
-	// Stops keeping a_actor's emitters placed (the armor came off).
+	// Stops keeping a_actor's emitters placed (the armor came off). Applied in order
+	// with Place: a Place asked after it stands.
 	void Forget(RE::ActorHandle a_actor);
 
 	// Main thread, once per frame, after Body::BeginFrame.
 	void Update(float a_delta);
 
+	// Main thread: places every kept actor again from scratch (the bodies were
+	// dropped, as after RaceMenu), keeping the requests.
+	void Rewind();
+
+	// Drops every request (load, new game, main menu).
 	void Reset();
 }

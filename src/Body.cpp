@@ -1,5 +1,7 @@
 #include "Body.h"
 
+#include "Settings.h"
+
 // The skin-wrap code (vertex decoding, skinning, the region test) is adapted from
 // OStrands' Body.cpp by LeonVanWinkle (Saint), GPL-3.0, by way of Lacrima's Face.cpp.
 // Lacrima reads one face; this reads every skinned mesh on the torso (the body, or
@@ -32,7 +34,7 @@ namespace Lactis::Body
 		constexpr float       kTipWeightFloor = 0.2f;
 		constexpr std::size_t kTipVertices = 6;
 		constexpr float       kTipDepth = 0.15f;
-		// A shape must carry this share of the breast vertices the widest shape carries
+		// A shape must carry this share of the breast vertices the widest shape on the same tip bone carries
 		// to be taken as the surface over the nipple.
 		constexpr float       kCoverShare = 0.25f;
 		// With no mesh weighted to a breast bone, the nipple is the surface nearest that
@@ -600,28 +602,38 @@ namespace Lactis::Body
 			std::array<std::pair<std::size_t, std::size_t>, kEyes> range{};
 			for (std::size_t side = 0; side < kEyes; ++side) {
 				// With several shapes over one breast (a body under a top), the one whose
-				// tip is furthest out is the surface that shows.
-				RE::NiPoint3 outward;
-				for (const auto& tip : tips[side]) {
-					outward += tip.axisInBone;
-				}
-				// ... among the shapes that cover the breast: a pendant or a pasty weighted
-				// to the breast bone also sits out in front, on a sliver of it.
-				std::size_t widest = 0;
-				for (const auto& tip : tips[side]) {
-					widest = std::max(widest, tip.coverage);
+				// tip is furthest out is the surface that shows. They compare in world
+				// space: each tip is in its own tip bone's space, and two shapes can be
+				// weighted to different breast bones (a 3BA top over a CBBE body).
+				const auto&               candidates = tips[side];
+				std::vector<RE::NiPoint3> at(candidates.size());
+				RE::NiPoint3              outward;
+				for (std::size_t i = 0; i < candidates.size(); ++i) {
+					const auto& world = candidates[i].bone->world;
+					at[i] = world * candidates[i].inBone;
+					outward += world.rotate * candidates[i].axisInBone;
 				}
 				const Tip* chosen = nullptr;
 				float      furthest = -std::numeric_limits<float>::max();
 				if (outward.Unitize() > 1e-4f) {
-					for (const auto& tip : tips[side]) {
-						if (static_cast<float>(tip.coverage) < kCoverShare * static_cast<float>(widest)) {
+					for (std::size_t i = 0; i < candidates.size(); ++i) {
+						// ... among the shapes that cover the breast: a pendant or a pasty
+						// weighted to the breast bone also sits out in front, on a sliver of
+						// it. Vertex counts compare only between shapes on the same bone (an
+						// outer breast bone carries a smaller part of the breast).
+						std::size_t widest = 0;
+						for (const auto& other : candidates) {
+							if (other.boneName == candidates[i].boneName) {
+								widest = std::max(widest, other.coverage);
+							}
+						}
+						if (static_cast<float>(candidates[i].coverage) < kCoverShare * static_cast<float>(widest)) {
 							continue;
 						}
-						const float out = tip.inBone.Dot(outward);
+						const float out = at[i].Dot(outward);
 						if (out > furthest) {
 							furthest = out;
-							chosen = &tip;
+							chosen = &candidates[i];
 						}
 					}
 				} else if (!tips[side].empty()) {
@@ -874,8 +886,10 @@ namespace Lactis::Body
 				torso.signature = std::move(signature);
 				Build(torso);
 				torso.frame = 0;  // pose again this frame: the points are new
-				if (torso.report != before) {
-					logger::info("{}: {}", a_actor->GetDisplayFullName(), torso.report);
+				// The first find always, a change only with the detailed log: a morph
+				// re-applied on a timer rebuilds the torso every few seconds.
+				if (torso.report != before && (before.empty() || Settings::Snapshot().debugLog)) {
+					logger::info("{}: {}", ActorName(a_actor), torso.report);
 				}
 			}
 			return &torso;
@@ -969,6 +983,12 @@ namespace Lactis::Body
 			return "no 3D loaded";
 		}
 		return torso->report;
+	}
+
+	std::string ActorName(RE::Actor* a_actor)
+	{
+		const char* name = a_actor ? a_actor->GetDisplayFullName() : nullptr;
+		return name && *name ? name : "someone";
 	}
 
 	void Reset()

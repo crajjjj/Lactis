@@ -38,8 +38,9 @@ Int optionNpcScale
 Int optionNpcDelete
 Int[] optionNpcActors
 
+; The packed mod version (LactisVersion); 2.1 registered 2.
 int Function GetVersion()
-  return 3
+  return LactisVersion.GetVersion()
 EndFunction
 
 Event OnConfigInit()
@@ -73,10 +74,10 @@ Event OnVersionUpdate(int a_version)
     Pages[0] = "$OL_SETTINGS"
     Pages[1] = "$OL_ACTOR_OFFSETS"
   endIf
-  if (a_version >= 3 && CurrentVersion < 3)
-    ; 2.2: the fluid leak toggle and the nipple search line. The pages are the same
+  if (a_version >= 20200 && CurrentVersion < 20200)
+    ; 2.2.0: the fluid leak toggle and the nipple search line. The pages are the same
     ; and the new option draws from OnPageReset, so there is nothing to rebuild.
-    Debug.Trace(self + ": Updating script to version 3")
+    Debug.Trace(self + ": Updating script to version 20200")
   endIf
 EndEvent
 

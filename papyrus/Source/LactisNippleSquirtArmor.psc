@@ -96,26 +96,22 @@ Function SetLevel(int index, bool doEquip=true)
   ; another actor's level may be on it now: always write this one's before it is
   ; equipped. (Comparing with this reference's own last level left a level 1 request
   ; playing the level 3 mesh another actor had set.)
-  if true
-    string leftNifPath = LevelNifsL[index]
-    string rightNifPath = LevelNifsR[index]
-    
-    if leftNifPath && rightNifPath
-      armorAA.SetModelPath(leftNifPath, false, true)
-      armorAAR.SetModelPath(rightNifPath, false, true)
-      currentLevel = index
-      
-      if doEquip
-        ; Force NIF update through unequip/equip cycle
-        ActorRef.UnequipItem(baseObject, true, true)
-        Utility.Wait(0.05)
-        ActorRef.EquipItem(baseObject, true, true)
-        Utility.Wait(0.05)
-        UpdateNodeProperties()
-      endif
-    else
-      LogError("Invalid NIF paths for level " + index)
-    endif
+  string leftNifPath = LevelNifsL[index]
+  string rightNifPath = LevelNifsR[index]
+  if !leftNifPath || !rightNifPath
+    LogError("Invalid NIF paths for level " + index)
+    return
+  endif
+  armorAA.SetModelPath(leftNifPath, false, true)
+  armorAAR.SetModelPath(rightNifPath, false, true)
+  currentLevel = index
+  if doEquip
+    ; Force NIF update through unequip/equip cycle
+    ActorRef.UnequipItem(baseObject, true, true)
+    Utility.Wait(0.05)
+    ActorRef.EquipItem(baseObject, true, true)
+    Utility.Wait(0.05)
+    UpdateNodeProperties()
   endif
 EndFunction
 
@@ -144,7 +140,9 @@ Event OnUnequipped(Actor akActor)
   Int OnUnEquipp = ModEvent.Create("OLactis.Unequipped")
   ModEvent.PushForm(OnUnEquipp, akActor as Form)
   ModEvent.Send(OnUnEquipp)
-  if LactisNative.Loaded()
+  ; Not when the actor already wears another squirt armor: on a level change the old
+  ; one's unequip can arrive after the new one is on, and would unplace it.
+  if LactisNative.Loaded() && akActor && !akActor.IsEquipped(self.GetBaseObject())
     LactisNative.ForgetEmitters(akActor)
   endif
 

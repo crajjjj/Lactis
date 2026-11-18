@@ -39,8 +39,11 @@ projects import from: do not turn it into this project).
 - `python tools/add_translations.py dist/Interface/Translations`: appends new `$OL_`
   keys to all eleven files (UTF-16 LE with BOM; English text in every language).
 - `python tools/nipple_check.py <mesh.nif>`: the nipple rule of `Body.cpp`, offline.
-- Version: `xmake.lua` `PROJECT_VERSION` and `fVersion` in `OninusLactis.psc`. The
-  MCM's `GetVersion()` is a plain counter (3 since 2.2).
+- Version: `xmake.lua` `PROJECT_VERSION` and `papyrus\Source\LactisVersion.psc`
+  (`GetVersion()` packed `major*10000 + minor*100 + patch`, 2.2.0 = 20200, and
+  `GetVersionString()`). The MCM's `GetVersion()` delegates to it, so a bump runs the
+  MCM's `OnVersionUpdate` ladder (append a block per version that needs one; 2.1
+  registered 2). `OninusLactis.psc` sets `fVersion` from it on every load.
 - `dist\OninusLactis.esp` is 2.1's original-slot plugin, unchanged;
   `dist\Optional\...\OninusLactis.esp` the 56/60 one. Form IDs the code uses: quest
   `0xD61`, armor `0xD6B`, armor addons `0xD6A` / `0xD6C`, overlay shader `0xD69`.
@@ -70,8 +73,10 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
   nipple on 3BA, UBE and BHUNP and survive every slider and morph, which is why this
   is a weight rule and not a geometry or UV rule (the rule "furthest forward vertex"
   lands 2.7 units inside the cleavage on a zero-slider body). With several shapes
-  the outermost one wins among those carrying at least 25% of the widest shape's
-  breast vertices (a pendant or nipple jewellery is weighted to the bone too). No
+  the outermost one (compared in world space, since shapes can use different tip
+  bones) wins among those carrying at least 25% of the breast vertices the widest
+  shape on the same tip bone carries (a pendant or nipple jewellery is weighted to
+  the bone too). No
   shape with a breast bone: the surface nearest the skeleton's own breast bone,
   reported as `estimated`. The rebuild trigger is the list of (geometry, skin
   partition) pointers, checked every 2 s: skee swaps the partition when it
@@ -93,15 +98,21 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
   nodes `Lactis Group L/R` exist under the actor's 3D, then every 0.5 s, the node's
   local translation is set to the nipple (plus `[squirt] lift` along the normal) in
   its parent's space, or to the MCM offset when the search is off or finds nothing.
-  Scale and the debug axis are set there too. `PatchRaces` at `kDataLoaded` adds
-  every `ActorTypeNPC` race to the two armor addons.
+  Scale and the debug axis are set there too. Place and Forget apply in the order
+  asked; an actor is dropped after 8 s with its 3D loaded and no group nodes (time
+  out of range does not count), and RaceMenu re-places (`Rewind`) instead of
+  dropping. `PatchRaces` at `kDataLoaded` adds every `ActorTypeNPC` race to the two
+  armor addons.
 - **Scripts.** `LactisNative.psc` (natives; `Loaded()` = `SKSE.GetPluginVersion`),
   `LactisTest.psc` + `dist\SKSE\CustomConsole\OninusLactis.yaml` (CUE, alias
   `lactis`; args by position, no `%` in returned strings). `OninusLactis.psc`:
   `StartMilkLeak` / `StopMilkLeak` drive the fluid leak (unless `FluidLeakDisabled`,
   inverted so an old save gets it on) and the overlay (`NippleLeakEnabled`);
   `StopNippleLeak` still stops only the overlay, because other mods call it to swap
-  in their own. `LactisNippleSquirtArmor.UpdateNodeProperties` hands placement to
+  in their own. A squirt's leak runs 18 s and stops with the squirt, but a leak
+  another mod started with `OLactis.Leak` (recorded in `ownLeakActors`) is neither
+  shortened nor stopped by a squirt. `Maintenance` (every load, through the player
+  alias) registers the mod events: the quest's own `OnPlayerLoadGame` never fires. `LactisNippleSquirtArmor.UpdateNodeProperties` hands placement to
   the DLL when it is loaded.
 - **Settings** (`Settings.cpp`): one field table drives the toml reader, the user
   file writer and the menu pages. Defaults belong in `dist\SKSE\Plugins\OninusLactis.toml`;

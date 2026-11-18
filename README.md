@@ -76,7 +76,9 @@ Commands act on the console-selected actor, or the player.
 
 The 2.1 API is unchanged: the `OLactis.Lactating`, `OLactis.Cleanup`,
 `OLactis.SetOffset`, `OLactis.RemoveOffset` mod events and the functions of
-`OninusLactis.psc` work as before. A squirt now also starts the fluid leak.
+`OninusLactis.psc` work as before. A squirt now also starts the fluid leak, which
+stops with the squirt; a leak you started with `OLactis.Leak` is left alone by
+squirts.
 
 New in 2.2:
 
@@ -116,7 +118,6 @@ swaps in its own overlay does not end the fluid leak.
   emitters when the mesh is there, and again after the actor's 3D reloads.
 - Every squirt request waited a random 0 to 2 seconds, refreshes included. A refresh
   is now immediate; a new effect staggers by at most 0.3 s.
-- The `OLactis.Lactating` event skipped the sex check the function API made.
 - A missing storage property ended the maintenance before the hotkey was registered.
 - The Portuguese translation was saved in an encoding the game does not read.
 

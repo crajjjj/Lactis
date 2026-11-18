@@ -93,6 +93,11 @@ string fVersion = "Oninus Lactis NG 2.2"
 Actor[] armorActors
 ObjectReference[] armorRefsLeft
 
+; Leaks another mod asked for with OLactis.Leak, which a squirt neither shortens
+; nor stops: the actor, and the real time the leak ends (0 = until OLactis.StopLeak).
+Actor[] ownLeakActors
+Float[] ownLeakUntil
+
 ; Helper function for logging that can be toggled in MCM
 Function Log(string a_message)
   if DebugLoggingEnabled
@@ -106,10 +111,10 @@ Function LogError(string a_message)
 EndFunction
 
 Event OnInit()
+  fVersion = "Oninus Lactis NG " + LactisVersion.GetVersionString()
   Debug.Notification("Installing " + fVersion + "...")
   Debug.Trace("Installing " + fVersion + "...")
   Maintenance()
-  RegisterModEvents()
 EndEvent
 
 Event OnPlayerLoadGame()
@@ -126,6 +131,12 @@ string Function GetVerboseVersion()
 EndFunction
 
 Function Maintenance()
+  ; a script variable keeps the value a save holds, so the version is set on every
+  ; load, not by its initializer
+  fVersion = "Oninus Lactis NG " + LactisVersion.GetVersionString()
+  ; a load ends every fluid leak, so the record of other mods' leaks starts empty
+  ownLeakActors = new Actor[20]
+  ownLeakUntil = new Float[20]
   CleanupAllArrays()
   if !QueuedStopActors
     QueuedStopActors = new Actor[20]
@@ -160,6 +171,9 @@ Function Maintenance()
     queuedEffectLevel = new Int[20]
   endif
   RegisterForSingleUpdate(20.0)
+  ; on every load, not only at install: a save from 2.1 has never registered the
+  ; events added since (the quest's own OnPlayerLoadGame never fires)
+  RegisterModEvents()
   ; the storage script sits on this same quest: take it from there, so an unfilled
   ; property heals instead of ending the maintenance before the key is registered
   actorStorage = (self as Form) as LactisActorStorage
@@ -275,12 +289,19 @@ EndFunction
 ; OLactis.Leak(Form Who, Int Duration, Int Stage): the milk leak alone, without the
 ; squirt, for Duration seconds (0 = until OLactis.StopLeak) at Stage 0 to 2.
 Function OnModEvent_Leak(Form Who, Int Duration, Int Stage)
-  StartMilkLeak(Who as Actor, Duration, Stage)
+  Actor actorRef = Who as Actor
+  if !actorRef
+    return
+  endif
+  NoteOwnLeak(actorRef, Duration)
+  StartMilkLeak(actorRef, Duration as float, Stage)
 EndFunction
 
 ; OLactis.StopLeak(Form Who): no new drops; the milk on the skin dries.
 Function OnModEvent_StopLeak(Form Who)
-  StopMilkLeak(Who as Actor)
+  Actor actorRef = Who as Actor
+  ForgetOwnLeak(actorRef)
+  StopMilkLeak(actorRef)
 EndFunction
 
 Function OnModEvent_SetOffset(Form Who, Float XOffset, Float ZOffset, Float YOffset, Float LactisScale)
@@ -307,7 +328,7 @@ Function StartNippleSquirt(Actor actorRef, int level=0)
     endif
     LactisNippleSquirtArmor armorRef = StartNippleSquirtLeft(actorRef, level)
     StoreArmorRefs(actorRef, armorRef)
-    StartMilkLeak(actorRef, 18, level)
+    SquirtLeak(actorRef, level)
   else
     Log("Cannot apply effect to male actor")
     return
@@ -332,7 +353,9 @@ Function StopNippleSquirt(Actor actorRef)
   if busyIndex >= 0
     actorBusy[busyIndex] = true
   endif
-  StopMilkLeak(actorRef)
+  if !HasOwnLeak(actorRef)
+    StopMilkLeak(actorRef)
+  endif
   LactisNippleSquirtArmor actorArmor = GetArmorRefs(actorRef)
   
   ; Only call StopNippleSquirtInternal if we got a valid armor reference
@@ -386,11 +409,6 @@ Function PlayNippleSquirt(Actor actorRef, float duration, int level=0)
   if !actorRef
     return
   endif
-  ; the mod event path comes straight here: the same check StartNippleSquirt makes
-  if actorRef.GetLeveledActorBase().GetSex() != 1
-    Log("Cannot apply effect to male actor")
-    return
-  endif
   int busyIndex = armorActors.Find(actorRef)
   if busyIndex >= 0 && actorBusy[busyIndex]
     Log("Actor " + actorRef.GetDisplayName() + " is busy, queuing PlayNippleSquirt")
@@ -424,7 +442,7 @@ Function PlayNippleSquirt(Actor actorRef, float duration, int level=0)
     Log("Updating existing timer for " + actorName + " to stop in " + duration + " seconds")
     
     ; Refresh the leak
-    StartMilkLeak(actorRef, duration as int, level)
+    SquirtLeak(actorRef, level)
     if busyIndex >= 0
       actorBusy[busyIndex] = false
     endif
@@ -456,7 +474,7 @@ Function PlayNippleSquirt(Actor actorRef, float duration, int level=0)
     LactisNippleSquirtArmor armorRef = StartNippleSquirtLeft(actorRef, level)
     StoreArmorRefs(actorRef, armorRef)
 
-    StartMilkLeak(actorRef, duration as int, level)
+    SquirtLeak(actorRef, level)
   endif
 
   ; Update timer if we didn't already do it in the perfect case
@@ -690,10 +708,17 @@ Function ApplyArmoredActorProperties()
   endwhile
 EndFunction
 
-; The milk leak that goes with a squirt, or stands alone (OLactis.Leak): the fluid
-; leak of OninusLactis.dll unless FluidLeakDisabled, and the old overlay when
-; NippleLeakEnabled. duration in seconds (0 = until stopped), level 0 to 2.
-Function StartMilkLeak(Actor actorRef, int duration, int level=0)
+; The leak that goes with a squirt: 18 s, as the overlay always ran, cut short when
+; the squirt stops. A leak another mod asked for is left as it is.
+Function SquirtLeak(Actor actorRef, int level)
+  if !HasOwnLeak(actorRef)
+    StartMilkLeak(actorRef, 18.0, level)
+  endif
+EndFunction
+
+; The milk leak: the fluid leak of OninusLactis.dll unless FluidLeakDisabled, and
+; the old overlay when NippleLeakEnabled. seconds 0 = until stopped, level 0 to 2.
+Function StartMilkLeak(Actor actorRef, float seconds, int level=0)
   if !actorRef || !actorRef.Is3DLoaded()
     return
   endif
@@ -704,15 +729,62 @@ Function StartMilkLeak(Actor actorRef, int duration, int level=0)
     elseif intensity < 0.4
       intensity = 0.4
     endif
-    LactisNative.Leak(actorRef, intensity, duration as float)
+    LactisNative.Leak(actorRef, intensity, seconds)
   endif
   if NippleLeakEnabled
-    if duration > 0
-      StartNippleLeak(actorRef, duration)
+    if seconds > 0.0
+      StartNippleLeak(actorRef, Math.Ceiling(seconds))
     else
-      StartNippleLeak(actorRef, 18)
+      StartNippleLeak(actorRef, -1) ; the effect shader's "until stopped"
     endif
   endif
+EndFunction
+
+Function NoteOwnLeak(Actor actorRef, int duration)
+  if !ownLeakActors || !actorRef
+    return
+  endif
+  int i = ownLeakActors.Find(actorRef)
+  if i < 0
+    i = ownLeakActors.Find(None)
+  endif
+  if i < 0
+    return
+  endif
+  ownLeakActors[i] = actorRef
+  if duration > 0
+    ownLeakUntil[i] = Utility.GetCurrentRealTime() + duration
+  else
+    ownLeakUntil[i] = 0.0
+  endif
+EndFunction
+
+Function ForgetOwnLeak(Actor actorRef)
+  if !ownLeakActors || !actorRef
+    return
+  endif
+  int i = ownLeakActors.Find(actorRef)
+  if i >= 0
+    ownLeakActors[i] = None
+    ownLeakUntil[i] = 0.0
+  endif
+EndFunction
+
+; True while a leak another mod asked for (OLactis.Leak) runs on the actor.
+bool Function HasOwnLeak(Actor actorRef)
+  if !ownLeakActors || !actorRef
+    return false
+  endif
+  int i = ownLeakActors.Find(actorRef)
+  if i < 0
+    return false
+  endif
+  if ownLeakUntil[i] > 0.0 && Utility.GetCurrentRealTime() >= ownLeakUntil[i]
+    ownLeakActors[i] = None
+    ownLeakUntil[i] = 0.0
+    return false
+  endif
+  return true
 EndFunction
 
 ; The overlay leak (an effect shader drawn through the body's UVs; its texture is
