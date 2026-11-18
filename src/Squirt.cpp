@@ -28,6 +28,7 @@ namespace Lactis::Squirt
 			float                missing{ 0.0f };
 			bool                 placed{ false };
 			bool                 logged{ false };
+			std::array<bool, Body::kEyes> covered{};  // as last placed, for the log
 		};
 
 		// Place and Forget in the order they were asked: an old armor's Forget that
@@ -87,13 +88,19 @@ namespace Lactis::Squirt
 				if (auto* axis = root->GetObjectByName(kAxes[side])) {
 					axis->local.scale = a_emitters.axis ? kAxisScale : 0.0f;
 				}
+				// No squirt through clothes: the particle systems hang under the group
+				// node, so culling it hides them until the nipple is bare again.
+				const bool covered = a_settings.hideCovered && Body::Covered(actor.get(), side);
+				group->SetAppCulled(covered);
 				Refresh(group);
-				if (!a_emitters.logged && a_settings.debugLog) {
+				if (a_settings.debugLog && (!a_emitters.logged || covered != a_emitters.covered[side])) {
 					const auto& at = group->local.translate;
-					logger::info("{}: {} squirt emitter under \"{}\" at ({:.2f}, {:.2f}, {:.2f}), {}", Body::ActorName(actor.get()),
+					logger::info("{}: {} squirt emitter under \"{}\" at ({:.2f}, {:.2f}, {:.2f}), {}{}", Body::ActorName(actor.get()),
 						side == Body::kLeft ? "left" : "right", parent->name.c_str() ? parent->name.c_str() : "?", at.x, at.y, at.z,
-						found ? "on the nipple found" : (a_settings.autoNipples ? "at the MCM offset: no nipple found" : "at the MCM offset"));
+						found ? "on the nipple found" : (a_settings.autoNipples ? "at the MCM offset: no nipple found" : "at the MCM offset"),
+						covered ? ", hidden: the nipple is covered" : "");
 				}
+				a_emitters.covered[side] = covered;
 			}
 			a_emitters.logged = a_emitters.logged || any;
 			return any ? Found::kPlaced : Found::kNoNodes;

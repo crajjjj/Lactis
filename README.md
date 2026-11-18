@@ -58,6 +58,22 @@ breast weights falls back to the surface nearest the skeleton's breast bone.
 `lactis status` in the console prints what was found on an actor and from which mesh
 and bone; `lactis nipples 1` marks the two points with a bead.
 
+## No squirt through clothes
+
+When clothes or armor cover a nipple, that side's squirt is hidden, and it shows again
+as soon as the nipple is bare. The milk leak is not affected: it runs over the
+clothes. Each side is judged on its own, so a top that bares one breast squirts from
+that one.
+
+A nipple counts as covered when a garment lies over the body's own nipple and covers
+the area around it: a top, a dress, a bikini cup, a cuirass. A piercing, a ring, a
+small nipple shield or a harness strap does not cover it. Under a body armor that has
+no skin of its own at the breast, the breast counts as covered.
+
+`lactis status` says, per side, `bare` or `covered by` and the mesh. To squirt through
+clothes as before, turn off `Squirt > Not through clothes` in the SKSE Menu Framework
+(`hide_covered` in the toml).
+
 ## Console (ConsoleUtil Extended)
 
 Commands act on the console-selected actor, or the player.
@@ -140,7 +156,8 @@ swaps in its own overlay does not end the fluid leak.
 - `xmake build papyrus`: Pyro compiles `papyrus\Source` into `dist\Scripts` and writes
   `Release\OninusLactisNG-<version>.zip`. `xmake build release` rebuilds the DLL first.
 - `python tools/make_milk.py` regenerates the milk meshes and textures.
-- `python tools/nipple_check.py <mesh.nif>` runs the nipple rule on a nif file.
+- `python tools/nipple_check.py <mesh.nif>` runs the nipple rule on a nif file;
+  `python tools/cover_check.py <body.nif> <outfit.nif>` the covered-nipple rule.
 - `python tools/make_ube_leak.py` repaints the overlay leak texture for the UBE body;
   `python tools/add_ube_leak_shader.py` adds its effect shader to both plugins.
 

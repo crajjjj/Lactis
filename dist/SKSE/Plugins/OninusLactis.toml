@@ -51,6 +51,7 @@ absorb = 0.3           # seconds a drop touched by a hand lasts
 [squirt]
 auto_nipples = true    # put the squirt emitters on the nipples found on the actor's own meshes, whatever the body, preset or morphs; false uses the MCM offsets
 lift = 0.1             # game units off the nipple, along its direction, where the squirt starts
+hide_covered = true    # no squirt from a nipple that clothes or armor cover (that side's emitters hide until it is bare again); the leak is not affected
 all_races = true       # every humanoid race can wear the squirt emitters, custom body races included, with no patch plugin (read at game start)
 
 [debug]

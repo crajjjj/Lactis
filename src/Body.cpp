@@ -37,6 +37,14 @@ namespace Lactis::Body
 		// A shape must carry this share of the breast vertices the widest shape on the same tip bone carries
 		// to be taken as the surface over the nipple.
 		constexpr float       kCoverShare = 0.25f;
+		// A garment covers a nipple when the ray out of the body's nipple meets it this
+		// far out (or this far inside the skin, where it clips), and at least this much
+		// of it (square units) lies within this radius of the nipple: a ring or a
+		// pasty does not cover it, a cup or a cuirass does.
+		constexpr float kCoverReach = 8.0f;
+		constexpr float kCoverBehind = 1.0f;
+		constexpr float kCoverRadius = 4.0f;
+		constexpr float kCoverArea = 16.0f;
 		// With no mesh weighted to a breast bone, the nipple is the surface nearest that
 		// bone, when it is this close (units).
 		constexpr float kBoneReach = 8.0f;
@@ -62,6 +70,7 @@ namespace Lactis::Body
 			std::vector<RE::NiPoint3>                normals;
 			std::vector<std::array<float, 4>>        weights;
 			std::vector<std::array<std::uint8_t, 4>> bones;
+			std::vector<std::array<std::uint32_t, 3>> triangles;
 		};
 
 		struct Box
@@ -84,6 +93,18 @@ namespace Lactis::Body
 			std::string                   shape;
 			std::size_t                   vertices{ 0 };
 			std::size_t                   coverage{ 0 };  // vertices the tip bone carries at all: how much of the breast the shape covers
+			RE::BSGeometry*               geometry{ nullptr };  // valid during Build only
+			bool                          skin{ false };        // a skin-shaded shape (the body), not clothing
+		};
+
+		// A worn shape that is not skin, kept through one Build to test what lies
+		// over the nipples.
+		struct Cover
+		{
+			RE::BSGeometry*                           geometry{ nullptr };
+			std::string                               name;
+			std::vector<RE::NiPoint3>                 positions;
+			std::vector<std::array<std::uint32_t, 3>> triangles;
 		};
 
 		using Signature = std::vector<std::pair<const void*, const void*>>;
@@ -107,6 +128,7 @@ namespace Lactis::Body
 			std::array<std::vector<std::array<RE::NiPoint3, 2>>, kEyes> relative;  // each joint's two probes in the side's bone space, last frame
 			std::array<bool, kEyes>                              moving{};
 			std::array<std::string, kEyes>                       how;
+			std::array<std::string, kEyes>                       cover;  // what covers each nipple; empty = bare
 			Ducts                                                ducts{};
 			float                                                scale{ 1.0f };
 			std::string                                          report;
@@ -286,6 +308,7 @@ namespace Lactis::Body
 				}
 			}
 			a_out.normals.assign(count, RE::NiPoint3{});
+			a_out.triangles.clear();
 			for (std::uint32_t p = 0; p < partition->numPartitions; ++p) {
 				const auto& part = partition->partitions[p];
 				if (!part.triList) {
@@ -307,6 +330,7 @@ namespace Lactis::Body
 					if (a >= count || b >= count || c >= count) {
 						continue;
 					}
+					a_out.triangles.push_back({ a, b, c });
 					const RE::NiPoint3 normal = (a_out.positions[b] - a_out.positions[a]).Cross(a_out.positions[c] - a_out.positions[a]);
 					a_out.normals[a] += normal;
 					a_out.normals[b] += normal;
@@ -554,7 +578,130 @@ namespace Lactis::Body
 			return signature;
 		}
 
-		void Build(Torso& a_torso)
+		// The body's own surface: skin-shaded (the game's skin tint shader), where a
+		// garment or armor is not.
+		bool SkinShaded(RE::BSGeometry* a_geometry)
+		{
+			auto* shader = a_geometry->GetGeometryRuntimeData().shaderProperty.get();
+			auto* material = shader ? shader->GetBaseMaterial() : nullptr;
+			return material && material->GetFeature() == RE::BSShaderMaterial::Feature::kFaceGenRGBTint;
+		}
+
+		// Where the ray a_origin + t * a_direction meets the triangle, either face.
+		bool Hit(const RE::NiPoint3& a_origin, const RE::NiPoint3& a_direction, const RE::NiPoint3& a_a, const RE::NiPoint3& a_b,
+			const RE::NiPoint3& a_c, float& a_t)
+		{
+			const RE::NiPoint3 edge1 = a_b - a_a;
+			const RE::NiPoint3 edge2 = a_c - a_a;
+			const RE::NiPoint3 p = a_direction.Cross(edge2);
+			const float        det = edge1.Dot(p);
+			if (std::abs(det) < 1e-9f) {
+				return false;
+			}
+			const float        inverse = 1.0f / det;
+			const RE::NiPoint3 s = a_origin - a_a;
+			const float        u = s.Dot(p) * inverse;
+			if (u < 0.0f || u > 1.0f) {
+				return false;
+			}
+			const RE::NiPoint3 q = s.Cross(edge1);
+			const float        v = a_direction.Dot(q) * inverse;
+			if (v < 0.0f || u + v > 1.0f) {
+				return false;
+			}
+			a_t = edge2.Dot(q) * inverse;
+			return true;
+		}
+
+		// What covers one nipple: the name of the garment, or empty when it is bare.
+		// From the body's own nipple (the skin-shaded shape weighted to the breast) a
+		// ray goes out along the nipple's direction; a garment it meets covers it, if
+		// enough of that garment lies around the nipple to be clothing and not a ring
+		// or a pasty. The two shapes are compared in the bind space of a bone both are
+		// bound to, so the pose and the breast physics do not enter into it.
+		std::string CoverOf(const std::vector<Tip>& a_tips, const std::vector<Cover>& a_covers, RE::Actor* a_actor)
+		{
+			const Tip* bare = nullptr;
+			for (const auto& tip : a_tips) {
+				if (tip.skin && (!bare || tip.coverage > bare->coverage)) {
+					bare = &tip;
+				}
+			}
+			if (!bare) {
+				// No skin weighted to this breast. Under a body armor that brings no body
+				// of its own (or a rigid cuirass) the breast is covered; with none, the
+				// body is just not skin-shaded, and nothing is known to cover it.
+				auto* worn = a_actor ? a_actor->GetWornArmor(RE::BGSBipedObjectForm::BipedObjectSlot::kBody) : nullptr;
+				if (!worn) {
+					return {};
+				}
+				const char* name = worn->GetName();
+				return std::format("{} (no skin under it)", name && *name ? name : "a body armor");
+			}
+			auto*      body = bare->geometry->GetGeometryRuntimeData().skinInstance.get();
+			const auto bodyBones = body->skinData->GetBoneCount();
+			for (const auto& cover : a_covers) {
+				auto*      skin = cover.geometry->GetGeometryRuntimeData().skinInstance.get();
+				const auto bones = skin->skinData->GetBoneCount();
+				// a bone both are bound to: the nipple's own if the garment has it, else
+				// any torso bone they share
+				std::uint32_t mine = bodyBones;
+				std::uint32_t theirs = bones;
+				for (std::uint32_t pass = 0; pass < 2 && theirs == bones; ++pass) {
+					for (std::uint32_t i = 0; i < bodyBones && theirs == bones; ++i) {
+						auto* bone = body->bones[i];
+						if (!bone || (pass == 0 ? bone != bare->bone.get() : !TorsoBone(NameOf(bone)))) {
+							continue;
+						}
+						for (std::uint32_t j = 0; j < bones; ++j) {
+							if (skin->bones[j] == bone) {
+								mine = i;
+								theirs = j;
+								break;
+							}
+						}
+					}
+				}
+				if (theirs == bones) {
+					continue;
+				}
+				const auto         toMine = body->skinData->GetBoneDataSkinToBone(mine);
+				const auto         toTheirs = skin->skinData->GetBoneDataSkinToBone(theirs);
+				const RE::NiPoint3 origin = toMine * bare->position;
+				const RE::NiPoint3 direction = Unit(toMine.rotate * bare->normal, RE::NiPoint3{});
+				if (direction.SqrLength() < 0.5f) {
+					continue;
+				}
+				std::vector<RE::NiPoint3> at(cover.positions.size());
+				for (std::size_t v = 0; v < at.size(); ++v) {
+					at[v] = toTheirs * cover.positions[v];
+				}
+				float                      area = 0.0f;
+				std::vector<std::uint32_t> around;
+				for (std::uint32_t t = 0; t < cover.triangles.size(); ++t) {
+					const auto& [a, b, c] = cover.triangles[t];
+					const RE::NiPoint3 middle = (at[a] + at[b] + at[c]) / 3.0f;
+					if (middle.GetSquaredDistance(origin) > kCoverRadius * kCoverRadius) {
+						continue;
+					}
+					area += 0.5f * (at[b] - at[a]).Cross(at[c] - at[a]).Length();
+					around.push_back(t);
+				}
+				if (area < kCoverArea) {
+					continue;
+				}
+				for (const auto t : around) {
+					const auto& [a, b, c] = cover.triangles[t];
+					float       distance = 0.0f;
+					if (Hit(origin, direction, at[a], at[b], at[c], distance) && distance >= -kCoverBehind && distance <= kCoverReach) {
+						return cover.name;
+					}
+				}
+			}
+			return {};
+		}
+
+		void Build(Torso& a_torso, RE::Actor* a_actor)
 		{
 			a_torso.joints.clear();
 			a_torso.points.clear();
@@ -567,12 +714,14 @@ namespace Lactis::Body
 			a_torso.relative = {};
 			a_torso.moving = {};
 			a_torso.how = {};
+			a_torso.cover = {};
 			a_torso.ducts = {};
 			a_torso.ok = false;
 			a_torso.report.clear();
 			auto* root = a_torso.root.get();
 
 			std::array<std::vector<Tip>, kEyes> tips;
+			std::vector<Cover>                  covers;
 			std::size_t                         shapes = 0;
 			Mesh                                mesh;
 			for (const auto& [object, partition] : a_torso.signature) {
@@ -586,12 +735,18 @@ namespace Lactis::Body
 					continue;
 				}
 				++shapes;
+				const bool skin = SkinShaded(geometry);
 				for (std::size_t side = 0; side < kEyes; ++side) {
 					if (auto tip = FindTip(geometry, mesh, flip, side)) {
 						tip->begin = begin;
 						tip->end = a_torso.points.size();
+						tip->geometry = geometry;
+						tip->skin = skin;
 						tips[side].push_back(std::move(*tip));
 					}
+				}
+				if (!skin) {
+					covers.push_back({ geometry, NameOf(geometry), mesh.positions, mesh.triangles });
 				}
 			}
 			if (a_torso.points.empty()) {
@@ -725,8 +880,14 @@ namespace Lactis::Body
 			std::ranges::sort(a_torso.aroundDucts);
 			a_torso.aroundDucts.erase(std::ranges::unique(a_torso.aroundDucts).begin(), a_torso.aroundDucts.end());
 
-			a_torso.report = std::format("{} torso points on {} shape(s); left nipple {}; right nipple {}", a_torso.points.size(), shapes,
-				a_torso.how[kLeft], a_torso.how[kRight]);
+			for (std::size_t side = 0; side < kEyes; ++side) {
+				a_torso.cover[side] = CoverOf(tips[side], covers, a_actor);
+			}
+			const auto covered = [&](std::size_t a_side) {
+				return a_torso.cover[a_side].empty() ? std::string{ ", bare" } : std::format(", covered by {}", a_torso.cover[a_side]);
+			};
+			a_torso.report = std::format("{} torso points on {} shape(s); left nipple {}{}; right nipple {}{}", a_torso.points.size(), shapes,
+				a_torso.how[kLeft], covered(kLeft), a_torso.how[kRight], covered(kRight));
 			a_torso.ok = true;
 		}
 
@@ -884,7 +1045,7 @@ namespace Lactis::Body
 			if (fresh || signature != torso.signature || !torso.ok) {
 				const std::string before = torso.report;
 				torso.signature = std::move(signature);
-				Build(torso);
+				Build(torso, a_actor);
 				torso.frame = 0;  // pose again this frame: the points are new
 				// The first find always, a change only with the detailed log: a morph
 				// re-applied on a timer rebuilds the torso every few seconds.
@@ -963,6 +1124,12 @@ namespace Lactis::Body
 			*a_bone = torso->bone[a_side].get();
 		}
 		return true;
+	}
+
+	bool Covered(RE::Actor* a_actor, std::size_t a_side)
+	{
+		auto* torso = TorsoOf(a_actor);
+		return torso && torso->ok && a_side < kEyes && !torso->cover[a_side].empty();
 	}
 
 	std::array<RE::NiAVObject*, kEyes> Bones(RE::Actor* a_actor)

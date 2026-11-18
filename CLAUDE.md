@@ -39,6 +39,8 @@ projects import from: do not turn it into this project).
 - `python tools/add_translations.py dist/Interface/Translations`: appends new `$OL_`
   keys to all eleven files (UTF-16 LE with BOM; English text in every language).
 - `python tools/nipple_check.py <mesh.nif>`: the nipple rule of `Body.cpp`, offline.
+- `python tools/cover_check.py <body.nif> [<worn.nif> ...]`: the covered-nipple rule
+  (`CoverOf`) on a body plus outfits, offline (BodySlide output nifs on nefaram).
 - `python tools/make_ube_leak.py`: `dist\textures\lactis\Milk_Leaking_UBE.dds`, the
   overlay leak repainted for the UBE UV layout (closest point on the 3BA body, shifted
   nipple onto nipple by the `nipple_check` rule; bodies read from nefaram).
@@ -91,6 +93,16 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
   reported as `estimated`. The rebuild trigger is the list of (geometry, skin
   partition) pointers, checked every 2 s: skee swaps the partition when it
   re-applies morphs.
+  **Covered** (`CoverOf`, `Covered`): a shape is the body when its shader is Skin
+  Tint (`Feature::kFaceGenRGBTint`); every other shape is worn. From the body's own
+  nipple (the skin tip with the most coverage) a ray goes out along its normal; a
+  worn shape covers it when the ray meets it from 1 unit inside to 8 units out and
+  at least 16 square units of it lie within 4 units (offline: clothing 32 to 80,
+  piercings and a nipple shield 15 at most, an open-cup bodysuit 7). Both shapes are
+  taken into the bind space of a bone they share (the nipple's bone, else any torso
+  bone), so pose and physics do not matter. No skin tip on a side: covered when a
+  body-slot (32) armor is worn, else bare. Computed per rebuild; the report and
+  `lactis status` say `bare` / `covered by <shape>`.
   Per frame `Of` poses the points around the nipples and those whose bind position
   can fall in the fluid's region, and reports per side whether the skin under that
   side's fluid moved against the side's bone (`moving`: each joint's two probe
@@ -108,7 +120,9 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
   nodes `Lactis Group L/R` exist under the actor's 3D, then every 0.5 s, the node's
   local translation is set to the nipple (plus `[squirt] lift` along the normal) in
   its parent's space, or to the MCM offset when the search is off or finds nothing.
-  Scale and the debug axis are set there too. Place and Forget apply in the order
+  Scale and the debug axis are set there too, and with `[squirt] hide_covered` the
+  group node is app-culled while `Body::Covered` holds for that side (the particle
+  systems hang under it, so they hide with it). Place and Forget apply in the order
   asked; an actor is dropped after 8 s with its 3D loaded and no group nodes (time
   out of range does not count), and RaceMenu re-places (`Rewind`) instead of
   dropping. `PatchRaces` at `kDataLoaded` adds every `ActorTypeNPC` race to the two

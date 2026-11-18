@@ -94,6 +94,8 @@ namespace Lactis
 				"Places the squirt emitters on the nipples found on the actor's own meshes, whatever the body, preset or morphs. Off uses the offsets from the MCM, as before." },
 			Field{ "squirt", "lift", &Settings::lift, -1.0f, 3.0f, "Squirt", "Emitter lift", "%.2f units",
 				"How far off the nipple the squirt starts, along the nipple's direction. A little clear of the skin keeps the particles from starting inside it." },
+			Field{ "squirt", "hide_covered", &Settings::hideCovered, 0, 1, "Squirt", "Not through clothes", nullptr,
+				"No squirt from a nipple that clothes or armor cover: that side's emitters are hidden while it is covered, and show again when it is bare. The milk leak is not affected." },
 			Field{ "squirt", "all_races", &Settings::allRaces, 0, 1, "Squirt", "Every humanoid race", nullptr,
 				"Lets every humanoid race wear the squirt emitters, custom body races included, with no patch plugin. Takes effect at the next game start." },
 

@@ -87,6 +87,10 @@ namespace Lactis::Body
 	// False when that side was not found. Main thread only.
 	bool Nipple(RE::Actor* a_actor, std::size_t a_side, RE::NiPoint3& a_point, RE::NiPoint3& a_normal, RE::NiAVObject** a_bone = nullptr);
 
+	// True when clothes or armor cover that side's nipple: a garment lies over the
+	// body's own nipple, or a body armor brings no skin there. Main thread only.
+	bool Covered(RE::Actor* a_actor, std::size_t a_side);
+
 	// The bone each side's fluid lives in (null: not found), without posing anything.
 	std::array<RE::NiAVObject*, kEyes> Bones(RE::Actor* a_actor);
 

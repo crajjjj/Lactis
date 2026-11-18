@@ -59,6 +59,7 @@ namespace Lactis
 		bool  autoNipples{ true };  // place the emitters on the nipples found on the meshes
 		float lift{ 0.1f };         // game units off the nipple, along its normal
 		bool  allRaces{ true };     // let every humanoid race wear the emitters
+		bool  hideCovered{ true };  // no squirt from a nipple clothes or armor cover
 
 		// [debug]
 		bool showDucts{ false };
