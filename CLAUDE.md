@@ -75,12 +75,18 @@ projects import from: do not turn it into this project).
   mods folder, so copy the file out). The script reaches Lactis only through
   `OLactis.Lactating` / `OLactis.Leak`, and MME only through its `MilkQuest.MilkingStage`
   / `MilkQuest.StopMilkingMachine` / `MME_MilkCycleComplete` events and the
-  StorageUtil keys `MME.MilkMaid.MilkMaximum` / `MME.MilkMaid.MilkCount`. The leak is a
+  StorageUtil keys `MME.MilkMaid.MilkMaximum` / `MilkCount` / `MilkGen`. The leak is a
   20 s light burst per MME milk cycle that finds a maid full (at most one per 90 s per
-  actor), as MME's own leak: 1.0.0's constant leak was too much. Never call MME's
-  `MME_Storage.getMilkMaximum` on an arbitrary actor: on a non-maid it writes a
-  default value onto the actor and logs a line. `kVersion` in the script re-runs its
-  `Maintenance` on saves that already run the quest.
+  actor), as MME's own leak: 1.0.0's constant leak was too much. It mirrors MME's own
+  leak conditions (MilkGen > 0, no `zad_DeviousBra`, no slot-56 "Plug"), and skips a
+  maid being milked. Never call MME's `MME_Storage.getMilkMaximum` on an arbitrary
+  actor: on a non-maid it writes a default value onto the actor and logs a line.
+  **Settings and the revision number are `AutoReadOnly` properties**
+  (`CURRENT_VERSION`, `SQUIRT_SECONDS`, ...): a save keeps a script VARIABLE's value
+  over its initializer, so a version kept in a variable never changes for a save that
+  ran the quest (caught in review before 1.0.0 reached anyone). `Upgrade()` runs on
+  every hook (a `Loading Menu` close, the milking events, the milk cycle); bump
+  `CURRENT_VERSION` when `Maintenance` must re-run.
 
 ## Vocabulary
 

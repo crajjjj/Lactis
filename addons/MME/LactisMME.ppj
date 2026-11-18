@@ -24,6 +24,7 @@
     <ZipFiles Output="..\..\Release">
         <ZipFile Name="@ModName" RootDir=".\build" Compression="deflate">
             <Include>LactisMME.esp</Include>
+            <Include>LactisMME-LICENSE.txt</Include>
             <Match In="Scripts">*.pex</Match>
             <Match In="Scripts\Source">*.psc</Match>
         </ZipFile>

@@ -4,7 +4,7 @@
 -- number, attached to the Oninus Lactis release it was made for.
 -- Overrides: PYRO_EXE (pyro.exe path), SKYRIM_GAME_PATH (game root).
 
-local ADDON_VERSION = "1.0.1"
+local ADDON_VERSION = "1.0.0"
 
 function main()
     local pyro = os.getenv("PYRO_EXE")
@@ -25,6 +25,8 @@ function main()
     os.tryrm(build)
     os.mkdir(path.join(build, "Scripts", "Source"))
     os.cp(path.join(addon, "LactisMME.esp"), build)
+    -- the script is GPL-3.0, so the archive carries the license text
+    os.cp(path.join(os.projectdir(), "LICENSE"), path.join(build, "LactisMME-LICENSE.txt"))
     os.cp(path.join(addon, "Source", "*.psc"), path.join(build, "Scripts", "Source"))
 
     os.execv(pyro, {
