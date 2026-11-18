@@ -79,6 +79,12 @@ no skin of its own at the breast, the breast counts as covered.
 clothes as before, turn off `Squirt > Not through clothes` in the SKSE Menu Framework
 (`hide_covered` in the toml).
 
+## Milk Mod Economy
+
+A separate add-on, `LactisMME-<version>.zip` on the release page (source in
+`addons\MME`), brings Oninus Lactis to Milk Mod Economy: milking makes the maid squirt,
+and a maid whose breasts are full leaks. See `addons\MME\README.md`.
+
 ## Console (ConsoleUtil Extended)
 
 Commands act on the console-selected actor, or the player.

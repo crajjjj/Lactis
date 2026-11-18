@@ -64,6 +64,21 @@ projects import from: do not turn it into this project).
   (CBBE layout) and `0xD70` (UBE layout, since 2.2.1; the script looks it up with
   `GetFormFromFile` and plays it when the race editor ID contains `UBE_`). The two
   plugins differ only in the armor slots; keep every other record identical.
+- **Add-ons** live in `addons\<name>\`, each its own small mod with its own zip,
+  version and README, attached to the Lactis release it was made for; they are not
+  in the main archive or the FOMOD. `addons\MME`: `xmake build mme` (scripts\
+  addon_mme.lua, `ADDON_VERSION`, Pyro on `addons\MME\LactisMME.ppj`) writes
+  `Release\LactisMME-<version>.zip`. `LactisMME.esp` (ESL, no masters but Skyrim.esm /
+  Update.esm) holds one start-game-enabled quest
+  `LactisMMEQuest` `0x800` with the script `LactisMME.psc`, built with houseCARL
+  (`housecarl_create_plugin` + `housecarl_create`; houseCARL writes into nefaram2's
+  mods folder, so copy the file out). The script reaches Lactis only through
+  `OLactis.Lactating` / `OLactis.Leak`, and MME only through its `MilkQuest.MilkingStage`
+  / `MilkQuest.StopMilkingMachine` events and the StorageUtil keys
+  `MME.MilkMaid.MilkMaximum` / `MME.MilkMaid.MilkCount`. Never call MME's
+  `MME_Storage.getMilkMaximum` on an arbitrary actor: on a non-maid it writes a
+  default value onto the actor and logs a line. `kVersion` in the script re-runs its
+  `Maintenance` on saves that already run the quest.
 
 ## Vocabulary
 
