@@ -70,6 +70,11 @@ furthest out. Clothes fitted to a body carry its weights and answer the same way
 several layers the outermost one that covers the breast wins. A rigid cuirass with no
 breast weights falls back to the surface nearest the skeleton's breast bone.
 
+A soft body (GT Softbody) has no breast bone chain: each breast is a net of `Soft_`
+bones closed by one on the nipple, and the search reads that one. The squirt's
+emitters hang under a chain bone that physics leaves still there, so on such a body
+they are moved to the nipple every frame.
+
 `lactis status` in the console prints what was found on an actor and from which mesh
 and bone; `lactis nipples 1` marks the two points with a bead.
 

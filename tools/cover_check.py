@@ -25,6 +25,9 @@ SKIN_TINT = 5
 
 def torso_bone(name):
     low = name.lower()
+    m = re.fullmatch(r"soft_([lr])(n00|\d{3})", low)  # GT Softbody's breast net
+    if m:
+        return m.group(1).upper(), 1000 if m.group(2) == "n00" else 100 + int(m.group(2)[1:])
     return any(part in low for part in ("breast", "spine", "belly", "pelvis", "thigh"))
 
 

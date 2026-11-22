@@ -176,6 +176,14 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
   (`g_own`): a leak of someone else's, or one a script replaced with a longer or
   endless one, is left alone, and it never stops a leak (below the threshold the
   last 12 s run out).
+- **Soft bodies** (GT Softbody): the body and clothes converted to it are weighted to
+  `Soft_L<spoke><ring>` / `Soft_R...` (ring 03 outermost) and the nipple bone
+  `Soft_LN00` / `Soft_RN00`, all in its skeleton (so not renamed by HDT-SMP), with no
+  `L Breast0x` weights. `BreastBone` (and the two check tools) take them as breast
+  bones, the nipple bone ranked above any chain bone; `TorsoBone` takes `soft_`. The
+  skeleton keeps `L Breast03`, which the squirt meshes ride and physics does not
+  move, so `Squirt.cpp` places every frame (`Emitters::follow`) whenever the
+  nipple's bone is not the group node's parent.
 - **Squirt off** (`[squirt] enabled`): `LactisNative.IsSquirtEnabled` (API 2).
   `OninusLactis.psc` (`SquirtDisabled`) equips no armor and starts the squirt's leak
   alone in `StartNippleSquirt` / `PlayNippleSquirt` / `ToggleNippleSquirt`; `Squirt.cpp`

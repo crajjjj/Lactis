@@ -28,6 +28,10 @@ namespace Lactis::Squirt
 			float                missing{ 0.0f };
 			bool                 placed{ false };
 			bool                 logged{ false };
+			// The nipple is skinned to another bone than the one the emitters hang
+			// under (a soft body: physics moves the breast's own net of bones, and the
+			// chain bone the emitters ride stands still). Placed every frame then.
+			bool                 follow{ false };
 			std::array<bool, Body::kEyes> covered{};  // as last placed, for the log
 		};
 
@@ -69,6 +73,7 @@ namespace Lactis::Squirt
 				return Found::kNo3D;
 			}
 			bool any = false;
+			a_emitters.follow = false;
 			for (std::size_t side = 0; side < Body::kEyes; ++side) {
 				auto* group = root->GetObjectByName(kGroups[side]);
 				auto* parent = group ? group->parent : nullptr;
@@ -78,7 +83,11 @@ namespace Lactis::Squirt
 				any = true;
 				RE::NiPoint3 point;
 				RE::NiPoint3 normal;
-				const bool   found = a_settings.autoNipples && Body::Nipple(actor.get(), side, point, normal);
+				RE::NiAVObject* bone = nullptr;
+				const bool      found = a_settings.autoNipples && Body::Nipple(actor.get(), side, point, normal, &bone);
+				if (found && bone && bone != parent) {
+					a_emitters.follow = true;
+				}
 				if (found) {
 					group->local.translate = parent->world.Invert() * (point + normal * (a_settings.lift * parent->world.scale));
 				} else {
@@ -200,7 +209,7 @@ namespace Lactis::Squirt
 			case Found::kPlaced:
 				emitters.placed = true;
 				emitters.missing = 0.0f;
-				emitters.next = clock + kEvery;
+				emitters.next = emitters.follow ? 0.0f : clock + kEvery;
 				break;
 			case Found::kNo3D:
 				emitters.placed = false;

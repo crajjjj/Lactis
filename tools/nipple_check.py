@@ -20,6 +20,9 @@ TIP_WEIGHT, TIP_LOOSE, TIP_FLOOR, TIP_VERTICES, TIP_DEPTH = 0.85, 0.6, 0.2, 6, 0
 
 def breast_bone(name):
     low = name.lower()
+    m = re.fullmatch(r"soft_([lr])(n00|\d{3})", low)  # GT Softbody's breast net
+    if m:
+        return m.group(1).upper(), 1000 if m.group(2) == "n00" else 100 + int(m.group(2)[1:])
     if "breast" not in low or "pre" in low:
         return None
     padded = " " + low
