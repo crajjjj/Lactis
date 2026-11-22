@@ -73,6 +73,10 @@ Function ForgetEmitters(Actor akActor) global native
 ; nipples found, and the offsets are only the fallback.
 Bool Function FindsNipples() global native
 
+; API 2. Whether the particle squirt is on ([squirt] enabled, the SKSE menu's Squirt
+; page). Off, the scripts equip no emitters and a squirt request gives its leak only.
+Bool Function IsSquirtEnabled() global native
+
 ; True when OninusLactis.dll is loaded. The scripts fall back to the old behaviour
 ; (fixed offsets, the overlay leak only) without it.
 Bool Function Loaded() global

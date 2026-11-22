@@ -53,6 +53,8 @@ projects import from: do not turn it into this project).
   `0xD70` into BOTH plugins (a copy of `0xD69` with that texture). Known: an effect
   shader also draws through the head's UVs; the UBE texture's paint falls on the UBE
   head's left jaw, the stock one under the lower lip of any head.
+- `python tools/add_silent_sound.py`: YNAM / ZNAM (silent pick-up and put-down sound,
+  Skyrim.esm `0x339C7`) on the squirt armor in BOTH plugins; a no-op when present.
 - Version: `xmake.lua` `PROJECT_VERSION` and `papyrus\Source\LactisVersion.psc`
   (`GetVersion()` packed `major*10000 + minor*100 + patch`, 2.2.0 = 20200, and
   `GetVersionString()`). The MCM's `GetVersion()` delegates to it, so a bump runs the
@@ -166,6 +168,19 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
   shortened nor stopped by a squirt. `Maintenance` (every load, through the player
   alias) registers the mod events: the quest's own `OnPlayerLoadGame` never fires. `LactisNippleSquirtArmor.UpdateNodeProperties` hands placement to
   the DLL when it is loaded.
+- **Arousal** (`Arousal.cpp`): `[leak] arousal` (0 = off). Every 5 s on the main
+  thread the player (and with `arousal_npcs` the high-process female actors) is read:
+  SLO Aroused NG's `SLA_GetArousalInt` export when that DLL is loaded, else the rank in
+  faction `0x3FC36` of `SexLabAroused.esm`. At or above the threshold it calls
+  `Milk::Cry` for 12 s, renewed by the next look. It renews only leaks it started
+  (`g_own`): a leak of someone else's, or one a script replaced with a longer or
+  endless one, is left alone, and it never stops a leak (below the threshold the
+  last 12 s run out).
+- **Squirt off** (`[squirt] enabled`): `LactisNative.IsSquirtEnabled` (API 2).
+  `OninusLactis.psc` (`SquirtDisabled`) equips no armor and starts the squirt's leak
+  alone in `StartNippleSquirt` / `PlayNippleSquirt` / `ToggleNippleSquirt`; `Squirt.cpp`
+  app-culls emitters already worn. An actor still wearing them takes the normal path
+  so the timers unequip as usual.
 - **Settings** (`Settings.cpp`): one field table drives the toml reader, the user
   file writer and the menu pages. Defaults belong in `dist\SKSE\Plugins\OninusLactis.toml`;
   the `Settings.h` initialisers mirror it, and `make_milk.py` authors the material

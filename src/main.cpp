@@ -1,3 +1,4 @@
+#include "Arousal.h"
 #include "Hooks.h"
 #include "Menu.h"
 #include "Papyrus.h"
@@ -15,6 +16,7 @@ namespace
 		case SKSE::MessagingInterface::kDataLoaded:
 			Lactis::Menu::Register();
 			Lactis::Squirt::PatchRaces();
+			Lactis::Arousal::Connect();
 			break;
 		case SKSE::MessagingInterface::kPreLoadGame:
 		case SKSE::MessagingInterface::kNewGame:

@@ -320,8 +320,30 @@ Function OnModEvent_RemoveOffset(Form Who)
   actorStorage.DeleteNpcStorage(Who as Actor)
 EndFunction
 
+; The particle squirt is switched off in the SKSE menu ([squirt] enabled): no emitters
+; are equipped, and whatever asks for a squirt gets its leak alone.
+bool Function SquirtDisabled()
+  return LactisNative.Loaded() && LactisNative.GetAPIVersion() >= 2 && !LactisNative.IsSquirtEnabled()
+EndFunction
+
+Function LeakInsteadOfSquirt(Actor actorRef, float seconds, int level)
+  if actorRef.GetLeveledActorBase().GetSex() != 1
+    return
+  endif
+  if seconds <= 0.0 || seconds > 18.0
+    seconds = 18.0
+  endif
+  if !HasOwnLeak(actorRef)
+    StartMilkLeak(actorRef, seconds, level)
+  endif
+EndFunction
+
 Function StartNippleSquirt(Actor actorRef, int level=0)
   if !actorRef
+    return
+  endif
+  if SquirtDisabled() && !HasArmorRefs(actorRef)
+    LeakInsteadOfSquirt(actorRef, 18.0, level)
     return
   endif
   if actorRef.GetLeveledActorBase().GetSex() == 1
@@ -395,6 +417,15 @@ Function ToggleNippleSquirt(Actor actorRef, int level=0)
     return
   endif
   bool hasNippleSquirt = HasArmorRefs(actorRef)
+  if !hasNippleSquirt && SquirtDisabled()
+    ; the hotkey toggles the leak instead
+    if LactisNative.IsLeaking(actorRef) && !HasOwnLeak(actorRef)
+      StopMilkLeak(actorRef)
+    else
+      LeakInsteadOfSquirt(actorRef, 18.0, level)
+    endif
+    return
+  endif
   ; How long does our operation take?
   ; float ftimeStart = Utility.GetCurrentRealTime()
   if !hasNippleSquirt
@@ -412,6 +443,12 @@ EndFunction
 ; duration.
 Function PlayNippleSquirt(Actor actorRef, float duration, int level=0)
   if !actorRef
+    return
+  endif
+  ; an actor who still wears the emitters goes on below, so the running squirt ends
+  ; on its timer (the DLL hides it meanwhile)
+  if SquirtDisabled() && !HasArmorRefs(actorRef)
+    LeakInsteadOfSquirt(actorRef, duration, level)
     return
   endif
   int busyIndex = armorActors.Find(actorRef)
@@ -1036,9 +1073,14 @@ EndEvent
 
 Function RemapStartLactatingKey(Int zKey)
   Log("Remapping ToggleNippleSquirt from " + StartLactatingKey + " to "+ zKey)
-  UnregisterForKey(StartLactatingKey)
+  if StartLactatingKey > 0
+    UnregisterForKey(StartLactatingKey)
+  endif
   StartLactatingKey = zKey
-  RegisterForKey(StartLactatingKey)
+  ; -1 = unmapped in the MCM: no hotkey
+  if StartLactatingKey > 0
+    RegisterForKey(StartLactatingKey)
+  endif
 EndFunction
 
 ; Maps the specified value val from the interval defined by srcMin and

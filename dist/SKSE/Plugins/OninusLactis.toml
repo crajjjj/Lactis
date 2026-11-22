@@ -16,6 +16,8 @@ well = 0.8             # seconds a drop takes to gather at the nipple
 hold = 0.6             # seconds a full drop clings to the nipple before it runs
 variety = 0.4          # how much one drop differs from the next: where around the nipple it starts, its size, a second drop right after; 0 = all alike
 both_breasts = true    # false: one breast, picked at random each time a leak starts
+arousal = 0            # the nipples leak while arousal is at this level or above (1 to 100), heavier the further above it; 0 = off. Needs SexLab Aroused (any edition)
+arousal_npcs = false   # true: aroused female NPCs nearby leak too, not only the player
 max_actors = 6         # actors leaking at once; the oldest stops past this
 max_particles = 200    # fluid on one breast at most
 max_distance = 3000    # game units from the camera; farther actors' milk pauses where it is (trails still dry)
@@ -49,6 +51,7 @@ hands = true           # the actor's own hands smear the milk they touch and tak
 absorb = 0.3           # seconds a drop touched by a hand lasts
 
 [squirt]
+enabled = true         # false: no particle squirt at all; whatever asks for one (the hotkey, another mod) gets the milk leak alone
 auto_nipples = true    # put the squirt emitters on the nipples found on the actor's own meshes, whatever the body, preset or morphs; false uses the MCM offsets
 lift = 0.1             # game units off the nipple, along its direction, where the squirt starts
 hide_covered = true    # no squirt from a nipple that clothes or armor cover (that side's emitters hide until it is bare again); the leak is not affected

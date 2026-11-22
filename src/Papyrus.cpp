@@ -98,6 +98,12 @@ namespace Lactis::Papyrus
 			return Settings::Get().autoNipples;
 		}
 
+		bool IsSquirtEnabled(RE::StaticFunctionTag*)
+		{
+			auto guard = Settings::Lock();
+			return Settings::Get().squirtEnabled;
+		}
+
 		// LactisTest debug natives
 
 		void NearbyNative(RE::StaticFunctionTag*, float a_radius, float a_intensity, float a_seconds)
@@ -151,6 +157,7 @@ namespace Lactis::Papyrus
 		a_vm->RegisterFunction("PlaceEmitters"sv, kScript, PlaceEmitters);
 		a_vm->RegisterFunction("ForgetEmitters"sv, kScript, ForgetEmitters);
 		a_vm->RegisterFunction("FindsNipples"sv, kScript, FindsNipples, true);
+		a_vm->RegisterFunction("IsSquirtEnabled"sv, kScript, IsSquirtEnabled, true);
 
 		a_vm->RegisterFunction("NearbyNative"sv, kTestScript, NearbyNative);
 		a_vm->RegisterFunction("ShowNipplesNative"sv, kTestScript, ShowNipplesNative);

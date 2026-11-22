@@ -94,7 +94,7 @@ Event OnPageReset(string page)
   if Page == "" || Page == "$OL_SETTINGS"
     SetCursorFillMode(TOP_TO_BOTTOM)
     AddHeaderOption("$OL_KEYBOARD_MANUAL_MODE")        
-    optionKeyStartLactating = AddKeyMapOption("$OL_TOGGLE_NIPPLE_SQUIRT_KEY", Main.StartLactatingKey)
+    optionKeyStartLactating = AddKeyMapOption("$OL_TOGGLE_NIPPLE_SQUIRT_KEY", Main.StartLactatingKey, OPTION_FLAG_WITH_UNMAP)
     AddHeaderOption("$OL_PLAYER_NIPPLE_OFFSET")
     string searching = "$OL_NO_DLL"
     if LactisNative.Loaded()
@@ -428,6 +428,7 @@ Bool Function ExportSettings()
   JsonUtil.SetFloatValue(filename, "optionOffsetLeftZ", Main.NippleOffsetL[1])
   JsonUtil.SetIntValue(filename, "optionDebugAxisEnabled", Main.DebugAxisEnabled as int)
   JsonUtil.SetFloatValue(filename, "optionGlobalEmitterScale", Main.GlobalEmitterScale)
+  JsonUtil.SetFloatValue(filename, "optionemitterscale", Main.EmitterScale)
   JsonUtil.SetIntValue(filename, "optionNippleLeakEnabled", Main.NippleLeakEnabled as int)
   JsonUtil.SetIntValue(filename, "optionfluidleakdisabled", Main.FluidLeakDisabled as int)
   JsonUtil.SetIntValue(filename, "optionDebugLoggingEnabled", Main.DebugLoggingEnabled as int)
@@ -455,6 +456,9 @@ Int Function ImportSettings()
   SetToggleOptionValue(optionDebugAxisEnabled, Main.DebugAxisEnabled)
   Main.GlobalEmitterScale = JsonUtil.GetFloatValue(filename, "optionGlobalEmitterScale")
   SetSliderOptionValue(optionGlobalEmitterScale, Main.GlobalEmitterScale, "{2}")
+  ; a file from before 2.2.2 has no such key: the scale stays as it is
+  Main.EmitterScale = JsonUtil.GetFloatValue(filename, "optionemitterscale", Main.EmitterScale)
+  SetSliderOptionValue(optionEmitterScale, Main.EmitterScale, "{2}")
   Main.NippleLeakEnabled = JsonUtil.GetIntValue(filename, "optionNippleLeakEnabled") as bool
   SetToggleOptionValue(optionNippleLeakEnabled, Main.NippleLeakEnabled)
   ; a file from before 2.2 has no such key: the fluid leak stays on

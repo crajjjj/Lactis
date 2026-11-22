@@ -91,7 +91,8 @@ namespace Lactis::Squirt
 				// No squirt through clothes: the particle systems hang under the group
 				// node, so culling it hides them until the nipple is bare again.
 				const bool covered = a_settings.hideCovered && Body::Covered(actor.get(), side);
-				group->SetAppCulled(covered);
+				// [squirt] enabled off hides emitters already worn; the script equips no new ones
+				group->SetAppCulled(covered || !a_settings.squirtEnabled);
 				Refresh(group);
 				if (a_settings.debugLog && (!a_emitters.logged || covered != a_emitters.covered[side])) {
 					const auto& at = group->local.translate;

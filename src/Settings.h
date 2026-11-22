@@ -23,6 +23,8 @@ namespace Lactis
 		float hold{ 0.6f };
 		float variety{ 0.4f };
 		bool  bothEyes{ true };  // both breasts
+		int   arousal{ 0 };          // leak at this arousal and above; 0 = never
+		bool  arousalNpcs{ false };  // female NPCs nearby too, not only the player
 		int   maxActors{ 6 };
 		int   maxParticles{ 200 };
 		float maxDistance{ 3000.0f };
@@ -56,6 +58,7 @@ namespace Lactis
 		float absorb{ 0.3f };
 
 		// [squirt]: the nipple squirt emitters (the equipped particle meshes)
+		bool  squirtEnabled{ true };  // off: no particle streams, a squirt request gives its leak only
 		bool  autoNipples{ true };  // place the emitters on the nipples found on the meshes
 		float lift{ 0.1f };         // game units off the nipple, along its normal
 		bool  allRaces{ true };     // let every humanoid race wear the emitters

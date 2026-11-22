@@ -48,6 +48,16 @@ Updating a save from 2.1 is fine. The fluid leak is on by default.
   its look, its physics, hands) and the nipple search. Changes save to
   `OninusLactis_User.toml`; `OninusLactis.toml` holds the defaults.
 
+Two switches people ask for, both in the SKSE menu:
+
+- **Leak only, no spray**: turn off `Squirt > Squirt enabled` (`[squirt] enabled` in
+  the toml). Nothing is sprayed any more; whatever asks for a squirt (the hotkey,
+  another mod) gets the milk leak alone.
+- **Leak when aroused**: set `Leak > Leak when aroused` to an arousal level (`[leak]
+  arousal`, 0 is off). The player's nipples leak while arousal is at that level or
+  above, heavier the further above it; `Aroused NPCs leak too` extends it to female
+  NPCs nearby. Needs SexLab Aroused, any edition.
+
 If the milk looks wrong under your lighting, start with `Look > Opacity` and
 `Look > Look style`.
 

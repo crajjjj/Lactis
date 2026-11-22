@@ -1,5 +1,6 @@
 #include "Hooks.h"
 
+#include "Arousal.h"
 #include "Body.h"
 #include "Milk.h"
 #include "Squirt.h"
@@ -75,6 +76,7 @@ namespace Lactis::Hooks
 					Body::BeginFrame(delta);
 					Milk::Get().Update(delta, false);
 					Squirt::Update(delta);
+					Arousal::Update(delta);
 				} catch (const std::exception& error) {
 					logger::error("frame update failed, all milk dropped: {}", error.what());
 					ResetBodies();
@@ -104,6 +106,7 @@ namespace Lactis::Hooks
 		Milk::Get().Reset();
 		Body::Reset();
 		Squirt::Reset();
+		Arousal::Reset();
 	}
 
 	void Install()
