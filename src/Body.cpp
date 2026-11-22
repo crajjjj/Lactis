@@ -1145,7 +1145,9 @@ namespace Lactis::Body
 			return false;
 		}
 		const RE::NiTransform animated = Animated(a_node);
-		const float           slack = 0.02f * std::max(a_node->world.scale, 1e-3f);
+		// Far from the world's origin a float holds a position to about 0.03 units,
+		// so a tighter test would call every bone out there driven.
+		const float           slack = 0.1f * std::max(a_node->world.scale, 1e-3f);
 		if (animated.translate.GetSquaredDistance(a_node->world.translate) > slack * slack) {
 			return true;
 		}
