@@ -75,6 +75,12 @@ bones closed by one on the nipple, and the search reads that one. The squirt's
 emitters hang under a chain bone that physics leaves still there, so on such a body
 they are moved to the nipple every frame.
 
+Breasts on HDT-SMP physics: SMP moves the breast bones after the game has placed
+everything that hangs under them, so the emitters, the milk and the test beads would
+stay where the animation had the breast. The plugin sees that on a bone and puts them
+back on the moving breast every frame. CBPC moves the bones before that step and
+needs nothing.
+
 `lactis status` in the console prints what was found on an actor and from which mesh
 and bone; `lactis nipples 1` marks the two points with a bead.
 

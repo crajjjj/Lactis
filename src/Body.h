@@ -87,6 +87,16 @@ namespace Lactis::Body
 	// False when that side was not found. Main thread only.
 	bool Nipple(RE::Actor* a_actor, std::size_t a_side, RE::NiPoint3& a_point, RE::NiPoint3& a_normal, RE::NiAVObject** a_bone = nullptr);
 
+	// Where the engine's own update puts the node: its parents' local transforms
+	// multiplied down from the top of the scene. Equal to its world transform unless
+	// something writes world transforms after that update (HDT-SMP does, on the bones
+	// it simulates, and leaves their children where the animation had them).
+	RE::NiTransform Animated(const RE::NiAVObject* a_node);
+
+	// True when the node's world transform is not the one the engine's update gives
+	// it: physics wrote it, and what hangs under the node does not ride along.
+	bool Driven(const RE::NiAVObject* a_node);
+
 	// True when clothes or armor cover that side's nipple: a garment lies over the
 	// body's own nipple, or a body armor brings no skin there. Main thread only.
 	bool Covered(RE::Actor* a_actor, std::size_t a_side);

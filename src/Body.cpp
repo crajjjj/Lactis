@@ -1121,6 +1121,44 @@ namespace Lactis::Body
 		return view;
 	}
 
+	RE::NiTransform Animated(const RE::NiAVObject* a_node)
+	{
+		std::array<const RE::NiAVObject*, 64> chain{};
+		std::size_t                           count = 0;
+		const RE::NiAVObject*                 top = a_node;
+		for (; top && top->parent && count < chain.size(); top = top->parent) {
+			chain[count++] = top;
+		}
+		if (!top) {
+			return {};
+		}
+		RE::NiTransform result = top->world;
+		while (count > 0) {
+			result = result * chain[--count]->local;
+		}
+		return result;
+	}
+
+	bool Driven(const RE::NiAVObject* a_node)
+	{
+		if (!a_node || !a_node->parent) {
+			return false;
+		}
+		const RE::NiTransform animated = Animated(a_node);
+		const float           slack = 0.02f * std::max(a_node->world.scale, 1e-3f);
+		if (animated.translate.GetSquaredDistance(a_node->world.translate) > slack * slack) {
+			return true;
+		}
+		for (std::size_t row = 0; row < 3; ++row) {
+			for (std::size_t column = 0; column < 3; ++column) {
+				if (std::abs(animated.rotate.entry[row][column] - a_node->world.rotate.entry[row][column]) > 2e-3f) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 	bool Nipple(RE::Actor* a_actor, std::size_t a_side, RE::NiPoint3& a_point, RE::NiPoint3& a_normal, RE::NiAVObject** a_bone)
 	{
 		auto* torso = TorsoOf(a_actor);

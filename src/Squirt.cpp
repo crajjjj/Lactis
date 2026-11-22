@@ -28,9 +28,11 @@ namespace Lactis::Squirt
 			float                missing{ 0.0f };
 			bool                 placed{ false };
 			bool                 logged{ false };
-			// The nipple is skinned to another bone than the one the emitters hang
-			// under (a soft body: physics moves the breast's own net of bones, and the
-			// chain bone the emitters ride stands still). Placed every frame then.
+			// The engine does not carry the emitters with the nipple: it is skinned to
+			// another bone than the one they hang under (a soft body: physics moves the
+			// breast's own net of bones, and the chain bone stands still), or physics
+			// writes that bone's world transform and leaves its children behind
+			// (HDT-SMP breasts). Placed every frame then, and kept so once seen.
 			bool                 follow{ false };
 			std::array<bool, Body::kEyes> covered{};  // as last placed, for the log
 		};
@@ -73,7 +75,6 @@ namespace Lactis::Squirt
 				return Found::kNo3D;
 			}
 			bool any = false;
-			a_emitters.follow = false;
 			for (std::size_t side = 0; side < Body::kEyes; ++side) {
 				auto* group = root->GetObjectByName(kGroups[side]);
 				auto* parent = group ? group->parent : nullptr;
@@ -92,10 +93,12 @@ namespace Lactis::Squirt
 					for (const RE::NiAVObject* up = parent; up && !rides; up = up->parent) {
 						rides = up == bone;
 					}
-					a_emitters.follow = a_emitters.follow || !rides;
+					a_emitters.follow = a_emitters.follow || !rides || Body::Driven(bone);
 				}
 				if (found) {
-					group->local.translate = parent->world.Invert() * (point + normal * (a_settings.lift * parent->world.scale));
+					// Against where the engine's update will put the parent, not where
+					// physics left it last frame: the update is what carries the group.
+					group->local.translate = Body::Animated(parent).Invert() * (point + normal * (a_settings.lift * parent->world.scale));
 				} else {
 					group->local.translate = { side == Body::kLeft ? a_emitters.offset[0] : -a_emitters.offset[0], a_emitters.offset[1], a_emitters.offset[2] };
 				}

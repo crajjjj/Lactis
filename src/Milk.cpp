@@ -1808,7 +1808,16 @@ namespace Lactis
 					a_world ? "world" : "breast bone", a_root->GetAppCulled() ? "" : "not ");
 			}
 		}
-		a_cheek.root->local = a_world ? parent->world.Invert() : RE::NiTransform{};
+		if (a_world) {
+			a_cheek.root->local = parent->world.Invert();
+		} else if (Body::Driven(parent)) {
+			// Physics (HDT-SMP) wrote the bone's world transform after the engine's
+			// update and left the bone's children where the animation had them. The
+			// fluid is in the frame physics made, so the root carries the difference.
+			a_cheek.root->local = Body::Animated(parent).Invert() * parent->world;
+		} else {
+			a_cheek.root->local = RE::NiTransform{};
+		}
 		a_cheek.root->SetAppCulled(a_root->GetAppCulled());
 		return true;
 	}

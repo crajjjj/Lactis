@@ -184,6 +184,15 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
   skeleton keeps `L Breast03`, which the squirt meshes ride and physics does not
   move, so `Squirt.cpp` places every frame (`Emitters::follow`) whenever the
   nipple's bone is not the group node's parent.
+- **HDT-SMP breasts** (2.3.1): `SkyrimBone::writeTransform` (hdtSMP64 source) writes
+  only the bone's `world`, after the engine's update, and leaves the bone's children
+  at the animated pose; our frame task then reads the physics pose from last frame.
+  `Body::Animated(node)` multiplies the locals down from the top (what the update
+  will give the node), `Body::Driven(node)` compares it with `world`. `Squirt.cpp`
+  places against `Animated(parent)` and follows every frame once a nipple's bone is
+  driven (latched for the request's life); `Milk::Attach` gives the milk root
+  `Animated(bone)^-1 * bone.world` instead of identity. Only the physics offset is
+  a frame late. CBPC writes locals, so nothing is driven there.
 - **Squirt off** (`[squirt] enabled`): `LactisNative.IsSquirtEnabled` (API 2).
   `OninusLactis.psc` (`SquirtDisabled`) equips no armor and starts the squirt's leak
   alone in `StartNippleSquirt` / `PlayNippleSquirt` / `ToggleNippleSquirt`; `Squirt.cpp`
