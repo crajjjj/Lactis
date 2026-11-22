@@ -85,8 +85,14 @@ namespace Lactis::Squirt
 				RE::NiPoint3 normal;
 				RE::NiAVObject* bone = nullptr;
 				const bool      found = a_settings.autoNipples && Body::Nipple(actor.get(), side, point, normal, &bone);
-				if (found && bone && bone != parent) {
-					a_emitters.follow = true;
+				if (found && bone) {
+					// rides the nipple's bone (directly or through the squirt mesh's
+					// own nodes): the engine carries it, no need to follow
+					bool rides = false;
+					for (const RE::NiAVObject* up = parent; up && !rides; up = up->parent) {
+						rides = up == bone;
+					}
+					a_emitters.follow = a_emitters.follow || !rides;
 				}
 				if (found) {
 					group->local.translate = parent->world.Invert() * (point + normal * (a_settings.lift * parent->world.scale));

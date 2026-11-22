@@ -188,7 +188,9 @@ Function Maintenance()
   endif
   Log("actorStorage initialized: " + actorStorage)
   Log("loaded version is " + fVersion)
-  RegisterForKey(StartLactatingKey)
+  if StartLactatingKey > 0 ; -1 = unmapped in the MCM
+    RegisterForKey(StartLactatingKey)
+  endif
   ApplyArmoredActorProperties()
 EndFunction
 

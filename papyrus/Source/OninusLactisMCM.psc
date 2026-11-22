@@ -456,7 +456,7 @@ Int Function ImportSettings()
   SetToggleOptionValue(optionDebugAxisEnabled, Main.DebugAxisEnabled)
   Main.GlobalEmitterScale = JsonUtil.GetFloatValue(filename, "optionGlobalEmitterScale")
   SetSliderOptionValue(optionGlobalEmitterScale, Main.GlobalEmitterScale, "{2}")
-  ; a file from before 2.2.2 has no such key: the scale stays as it is
+  ; a file from before 2.3.0 has no such key: the scale stays as it is
   Main.EmitterScale = JsonUtil.GetFloatValue(filename, "optionemitterscale", Main.EmitterScale)
   SetSliderOptionValue(optionEmitterScale, Main.EmitterScale, "{2}")
   Main.NippleLeakEnabled = JsonUtil.GetIntValue(filename, "optionNippleLeakEnabled") as bool
