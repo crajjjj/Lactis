@@ -73,7 +73,8 @@ breast weights falls back to the surface nearest the skeleton's breast bone.
 A soft body (GT Softbody) has no breast bone chain: each breast is a net of `Soft_`
 bones closed by one on the nipple, and the search reads that one. The squirt's
 emitters hang under a chain bone that physics leaves still there, so on such a body
-they are moved to the nipple every frame.
+they are moved to the nipple every frame. Shapes that are never drawn (the collision
+meshes a physics body carries) are left out of the search.
 
 Breasts on HDT-SMP physics: SMP moves the breast bones after the game has placed
 everything that hangs under them, so the emitters, the milk and the test beads would

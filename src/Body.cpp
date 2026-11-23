@@ -586,7 +586,12 @@ namespace Lactis::Body
 			Signature signature;
 			RE::BSVisit::TraverseScenegraphGeometries(a_root, [&](RE::BSGeometry* a_geometry) {
 				auto* partition = PartitionOf(a_geometry);
-				if (partition && partition->vertexCount > 0 && !Skipped(a_geometry, a_root)) {
+				// A shape with no shader is never drawn: a physics collision proxy
+				// (GT Softbody's body_brs is weighted to the nipple bone like the skin,
+				// keeps its shape whatever the body's sliders do, and would be taken
+				// for the breast, as a nipple and as a garment covering it).
+				if (partition && partition->vertexCount > 0 && a_geometry->GetGeometryRuntimeData().shaderProperty &&
+					!Skipped(a_geometry, a_root)) {
 					// skee swaps in a new partition whenever it re-applies body morphs, so
 					// the pointer changing means the vertices did
 					signature.emplace_back(a_geometry, partition);

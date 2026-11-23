@@ -184,6 +184,12 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
   skeleton keeps `L Breast03`, which the squirt meshes ride and physics does not
   move, so `Squirt.cpp` places every frame (`Emitters::follow`) whenever the
   nipple's bone is not the group node's parent.
+- **Undrawn shapes** (2.3.2): `SignatureOf` leaves out a geometry with no shader
+  property. GT Softbody's body nifs and its "Breast Physics Spell" object carry
+  `body_brs` (and `body_butt`, `body_rigid`, `Box001`, `VirtualGround`): collision
+  proxies with no shader, `body_brs` weighted to `Soft_LN00` with enough coverage
+  to pass `kCoverShare` on the UBE body. Sliders from other mods do not move it, so
+  it won "outermost" on such presets (nipple off the skin) and counted as a cover.
 - **HDT-SMP breasts** (2.3.1): `SkyrimBone::writeTransform` (hdtSMP64 source) writes
   only the bone's `world`, after the engine's update, and leaves the bone's children
   at the animated pose; our frame task then reads the physics pose from last frame.
