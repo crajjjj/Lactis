@@ -11,7 +11,7 @@
     leak runs down any body, and every humanoid race (UBE included) can wear the effect.
 
     The installer asks which body slots the squirt should use: 58 and 59 (default), or
-    56 and 60 for setups where those are taken, such as Devious Devices.
+    54 and 56 for setups where those are taken, such as Devious Devices or GT Softbody.
   </Description>
   <Groups>
     <element>Animation - Sex</element>

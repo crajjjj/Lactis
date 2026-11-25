@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PLUGINS = [
     ROOT / "dist" / "OninusLactis.esp",
-    ROOT / "dist" / "Optional" / "Alternative slots 56-60 (DD compatible)" / "OninusLactis.esp",
+    ROOT / "dist" / "Optional" / "Alternative slots 54-56 (DD and SMP compatible)" / "OninusLactis.esp",
 ]
 ARMOR = 0x02000D6B
 SILENCE = 0x000339C7

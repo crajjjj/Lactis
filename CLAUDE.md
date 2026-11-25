@@ -36,7 +36,7 @@ projects import from: do not turn it into this project).
   is a Data-layout tree plus a FOMOD: `scripts\pyro.lua` copies `fomod\` into
   `dist\fomod` and stamps `@VERSION@` in `info.xml` from `PROJECT_VERSION`. The
   installer takes the five Data folders whole and asks for the plugin (root = slots
-  58/59, `Optional\...` = 56/60); a new top-level Data folder needs a line in both
+  58/59, `Optional\...` = 54/56); a new top-level Data folder needs a line in both
   `ModuleConfig.xml` and the ppj's `<ZipFiles>`.
 - `python tools/make_milk.py`: `dist\meshes\OninusLactis\milk_*.nif` and
   `dist\textures\lactis\milk*.dds`. Bone names `BlobNN` / `RopeNN` and the rope bone
@@ -61,7 +61,10 @@ projects import from: do not turn it into this project).
   MCM's `OnVersionUpdate` ladder (append a block per version that needs one; 2.1
   registered 2). `OninusLactis.psc` sets `fVersion` from it on every load.
 - `dist\OninusLactis.esp` is 2.1's original-slot plugin, unchanged;
-  `dist\Optional\...\OninusLactis.esp` the 56/60 one. Form IDs the code uses: quest
+  `dist\Optional\...\OninusLactis.esp` the 54/56 one (56/60 until 2.3.5,
+  moved with `tools/set_alt_slots.py`: 60 is the 3BA SMP object's and GT Softbody's
+  slot, 59 GT Softbody's breast physics, 58/59 Devious Devices; only a DD chastity bra
+  is on 56). Form IDs the code uses: quest
   `0xD61`, armor `0xD6B`, armor addons `0xD6A` / `0xD6C`, overlay shader `0xD69`
   (CBBE layout) and `0xD70` (UBE layout, since 2.2.1; the script looks it up with
   `GetFormFromFile` and plays it when the race editor ID contains `UBE_`). The two

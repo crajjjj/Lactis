@@ -37,15 +37,16 @@ so the squirt would take that item off while it plays.
               </typeDescriptor>
             </plugin>
 
-            <plugin name="Slots 56 and 60 (Devious Devices)">
+            <plugin name="Slots 54 and 56 (Devious Devices, SMP bodies)">
               <description>
-The same plugin with the squirt moved to body slots 56 and 60, for setups where 58 or 59
-are taken, such as Devious Devices: there the squirt would take a device off.
+The same plugin with the squirt moved to body slots 54 and 56, for setups where 58 or 59
+are taken: Devious Devices (harnesses, arm cuffs) and GT Softbody (its breast physics is
+worn on 59). There the squirt would take a device off or stop the breast physics.
 
 To switch later, run the installer again and pick the other option.
               </description>
               <files>
-                <file source="Optional\Alternative slots 56-60 (DD compatible)\OninusLactis.esp" destination="OninusLactis.esp" priority="0" />
+                <file source="Optional\Alternative slots 54-56 (DD and SMP compatible)\OninusLactis.esp" destination="OninusLactis.esp" priority="0" />
               </files>
               <typeDescriptor>
                 <type name="Optional" />

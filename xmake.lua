@@ -2,7 +2,7 @@ set_xmakever("3.0.0")  -- the commonlibsse-ng submodule requires 3.0
 
 -- Globals
 PROJECT_NAME = "OninusLactis"
-PROJECT_VERSION = "2.3.4"
+PROJECT_VERSION = "2.3.5"
 PROJECT_AUTHOR = "crajjjj"
 
 -- Project

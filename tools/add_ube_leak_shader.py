@@ -20,7 +20,7 @@ import esptree as E  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGINS = [
     os.path.join(ROOT, r"dist\OninusLactis.esp"),
-    os.path.join(ROOT, r"dist\Optional\Alternative slots 56-60 (DD compatible)\OninusLactis.esp"),
+    os.path.join(ROOT, r"dist\Optional\Alternative slots 54-56 (DD and SMP compatible)\OninusLactis.esp"),
 ]
 SOURCE_ID = 0xD69
 LOCAL_ID = 0xD70
