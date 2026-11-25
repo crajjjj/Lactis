@@ -508,7 +508,7 @@ namespace Lactis::Body
 					continue;
 				}
 				const std::string lower = Lower(NameOf(skin->bones[i]));
-				if (sample.empty() && (lower.find("soft_") != std::string::npos || lower.find("breast") != std::string::npos) &&
+				if (sample.empty() && (lower.find("soft") != std::string::npos || lower.find("breast") != std::string::npos) &&
 					lower.find("pre") == std::string::npos) {
 					sample = NameOf(skin->bones[i]);
 				}
@@ -534,36 +534,32 @@ namespace Lactis::Body
 		{
 			auto*               skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
 			const std::uint32_t bones = skin->skinData->GetBoneCount();
-			// the side's breast bones, outermost first
-			std::vector<std::pair<int, std::uint32_t>> ranked;
+			// the side's outermost breast bone
+			std::uint32_t tipBone = bones;
+			int           best = -1;
+			std::size_t   found = 0;
 			for (std::uint32_t i = 0; i < bones; ++i) {
 				const char* name = skin->bones[i] ? skin->bones[i]->name.c_str() : nullptr;
 				std::size_t side = 0;
 				int         rank = 0;
 				if (name && BreastBone(name, side, rank) && side == a_side) {
-					ranked.emplace_back(rank, i);
+					++found;
+					if (rank > best) {
+						best = rank;
+						tipBone = i;
+					}
 				}
 			}
-			if (ranked.empty()) {
+			if (tipBone == bones) {
 				a_why = "no breast bone";
 				return std::nullopt;
 			}
-			std::ranges::sort(ranked, std::greater{});
-			// The outermost bone marks the nipple. A mesh can list it and weight nothing
-			// to it (a top copied from a body, trimmed above the nipple): the next bone
-			// in then gives that mesh's most protruding point.
-			std::string tried;
-			for (const auto& [rank, bone] : ranked) {
-				float heaviest = 0.0f;
-				if (auto tip = TipOn(a_geometry, a_mesh, a_flip, bone, heaviest)) {
-					return tip;
-				}
-				if (tried.empty()) {
-					tried = std::format("{} breast bone(s), heaviest weight on {} is {:.2f}", ranked.size(), NameOf(skin->bones[bone]), heaviest);
-				}
+			float heaviest = 0.0f;
+			auto  tip = TipOn(a_geometry, a_mesh, a_flip, tipBone, heaviest);
+			if (!tip) {
+				a_why = std::format("{} breast bone(s), heaviest weight on {} is {:.2f}", found, NameOf(skin->bones[tipBone]), heaviest);
 			}
-			a_why = tried;
-			return std::nullopt;
+			return tip;
 		}
 
 		std::optional<Tip> TipOn(RE::BSGeometry* a_geometry, const Mesh& a_mesh, float a_flip, std::uint32_t a_tipBone, float& a_heaviest)

@@ -179,8 +179,15 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
 - **Soft bodies** (GT Softbody): the body and clothes converted to it are weighted to
   `Soft_L<spoke><ring>` / `Soft_R...` (ring 03 outermost) and the nipple bone
   `Soft_LN00` / `Soft_RN00`, all in its skeleton (so not renamed by HDT-SMP), with no
-  `L Breast0x` weights. `BreastBone` (and the two check tools) take them as breast
-  bones, the nipple bone ranked above any chain bone; `TorsoBone` takes `soft_`. The
+  `L Breast0x` weights. Its **Ultra** sex-animation body (shapes `GTC` / `GTR`, CBBE
+  and BHUNP, about 190 bones) has another net: `L_SoftBody<spoke><ring>` and the
+  nipple `L_SoftBodyNip` / `R_SoftBodyNip`; 2.3.2 and older found no breast bone on it
+  and guessed from the skeleton's unused `Soft_LN00`. `SoftBone` (and the two check
+  tools) take both as breast bones, the nipple bone ranked above any chain bone, and
+  read the last word of a name, so an HDT-SMP rename prefix on a skeleton without the
+  bones does not hide them; `TorsoBone` takes `soft_` and `softbody`. When the weights
+  give no nipple, the status line adds a `ShapeNote` per shape (bones, parts, the
+  heaviest weight on the tip bone, a bone name as the game has it). The
   skeleton keeps `L Breast03`, which the squirt meshes ride and physics does not
   move, so `Squirt.cpp` places every frame (`Emitters::follow`) whenever the
   nipple's bone is not the group node's parent.
