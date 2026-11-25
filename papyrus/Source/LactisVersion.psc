@@ -5,9 +5,9 @@ Scriptname LactisVersion Hidden
 ; this, so a bump here runs the MCM's OnVersionUpdate on existing saves. 2.1's MCM
 ; registered 2, which every packed version clears.
 int Function GetVersion() global
-  return 20303
+  return 20304
 EndFunction
 
 string Function GetVersionString() global
-  return "2.3.3"
+  return "2.3.4"
 EndFunction

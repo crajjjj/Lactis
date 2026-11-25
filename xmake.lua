@@ -2,7 +2,7 @@ set_xmakever("3.0.0")  -- the commonlibsse-ng submodule requires 3.0
 
 -- Globals
 PROJECT_NAME = "OninusLactis"
-PROJECT_VERSION = "2.3.3"
+PROJECT_VERSION = "2.3.4"
 PROJECT_AUTHOR = "crajjjj"
 
 -- Project
@@ -24,8 +24,9 @@ option("mod_name")
 option_end()
 
 -- Dependencies & Includes
--- The plugin installs no trampoline hooks, so CommonLib's patch-site diagnostics
--- have nothing to check; off, their MinHook HDE64 code stays out of the DLL.
+-- The plugin's one hook (the main update call, src/Hooks.cpp) checks its own site,
+-- so CommonLib's patch-site diagnostics stay off; off, their MinHook HDE64 code
+-- stays out of the DLL.
 set_config("skse_patch_safety", false)
 includes("lib/commonlibsse-ng")
 

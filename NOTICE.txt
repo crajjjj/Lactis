@@ -21,7 +21,7 @@ from OStrands 0.8.0 (https://gitlab.com/LilRicefield/ostrands):
 - src/Milk.cpp: Lacrima's Tears.cpp (the fluid rendering: blobs, ropes, drops; the
   emission, sleep and trail logic), fed from the nipples, with one simulation frame
   per breast bone. Its running-mascara code is still in the file and idle.
-- src/Hooks.cpp: the frame driver.
+- src/Hooks.cpp: the input-event frame driver (the fallback since 2.3.4).
 - tools/nifkit.py and tools/make_milk.py: the NIF and DDS writers.
 
 vendor/SKSEMenuFramework/SKSEMenuFramework.h is the client header of SKSE Menu

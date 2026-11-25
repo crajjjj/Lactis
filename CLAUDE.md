@@ -101,8 +101,14 @@ unless a cleanup is asked for; removing it means re-reading 3000 lines.
 
 ## Architecture
 
-- **Threading.** `Hooks.cpp`: an input-event sink queues one SKSE task per frame; on
-  the main thread it runs `Body::BeginFrame`, `Milk::Update`, `Squirt::Update`.
+- **Threading.** `Hooks.cpp` runs one frame on the main thread: `Body::BeginFrame`,
+  `Milk::Update`, `Squirt::Update`, `Arousal::Update`. Since 2.3.4 the frame comes
+  from a call hook early in the game's main update (SE 35565 + 0x748, AE 36564 +
+  0xC26, from 1.7.99 on + 0xC38, VR + 0x7EE; the trampoline is asked for in
+  `SKSE::Init`). On 1.7.104 the 1.6 offset is also a call, to another function, so
+  the offset goes by version. If the site holds no call (`E8`) the old driver takes
+  over: an input-event sink that queues one SKSE task per frame. The log's
+  `frame driver:` line says which one runs.
   Papyrus natives and the menu never touch the scene graph: they queue requests.
 - **Body** (`Body.cpp`): per actor, every visible skinned shape under the 3D root
   (not the facegen head, not Lactis's own `LactisMilk` nodes) is read from its skin
