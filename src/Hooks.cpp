@@ -151,7 +151,13 @@ namespace Lactis::Hooks
 				logger::warn("main update: no call at {:X}, the offset does not fit this runtime", site - REL::Module::get().base());
 				return false;
 			}
-			MainUpdate::func = SKSE::GetTrampoline().write_call<5>(site, MainUpdate::thunk);
+			// the 14 bytes asked for in SKSE::Init; without them the write would end the game
+			auto& trampoline = SKSE::GetTrampoline();
+			if (trampoline.free_size() < 14) {
+				logger::warn("main update: no trampoline memory");
+				return false;
+			}
+			MainUpdate::func = trampoline.write_call<5>(site, MainUpdate::thunk);
 			return true;
 		}
 	}
