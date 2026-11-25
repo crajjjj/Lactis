@@ -20,10 +20,12 @@ TIP_WEIGHT, TIP_LOOSE, TIP_FLOOR, TIP_VERTICES, TIP_DEPTH = 0.85, 0.6, 0.2, 6, 0
 
 def breast_bone(name):
     low = name.lower()
-    low = re.sub(r"^.* (?=soft_[^ ]*$)", "", low)  # HDT-SMP's rename prefix on a bone the skeleton lacks
-    m = re.fullmatch(r"soft_([lr])(n00|\d{3})", low)  # GT Softbody's breast net
+    last = low.rsplit(" ", 1)[-1]  # HDT-SMP's rename prefix on a bone the skeleton lacks
+    m = re.fullmatch(r"soft_([lr])(n00|\d{3,4})", last)  # GT Softbody's breast net
+    if not m:
+        m = re.fullmatch(r"([lr])_softbody(nip|\d{3,4})", last)  # its Ultra body
     if m:
-        return m.group(1).upper(), 1000 if m.group(2) == "n00" else 100 + int(m.group(2)[1:])
+        return m.group(1).upper(), 1000 if m.group(2) in ("n00", "nip") else 100 + int(m.group(2)[-2:])
     if "breast" not in low or "pre" in low:
         return None
     padded = " " + low

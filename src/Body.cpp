@@ -240,31 +240,54 @@ namespace Lactis::Body
 		// a_rank orders a chain of them from the chest out (the digits at the end).
 		//
 		// A soft body (GT Softbody) has no such chain: each breast is a net of bones
-		// "Soft_L<spoke><ring>" (ring 00 at the chest, 03 outermost) closed by one bone
-		// on the nipple, "Soft_LN00". Those count as breast bones, the nipple's ranked
-		// above any chain bone a mesh may also carry, since physics moves only the net.
+		// closed by one bone on the nipple. Its bodies use two sets of names: the
+		// standard one "Soft_L<spoke><ring>" with the nipple "Soft_LN00", and the Ultra
+		// body's "L_SoftBody<spoke><ring>" with the nipple "L_SoftBodyNip". Both count
+		// as breast bones (higher ring = further out), the nipple's ranked above any
+		// chain bone a mesh may also carry, since physics moves only the net.
+		bool SoftBone(std::string_view a_name, std::size_t& a_side, int& a_rank)
+		{
+			const auto digits = [](std::string_view a_text) {
+				return !a_text.empty() && std::ranges::all_of(a_text, [](char a_c) { return std::isdigit(static_cast<unsigned char>(a_c)) != 0; });
+			};
+			const auto ring = [](std::string_view a_text) {
+				return 100 + (a_text[a_text.size() - 2] - '0') * 10 + (a_text[a_text.size() - 1] - '0');
+			};
+			std::string_view rest;
+			if (a_name.starts_with("soft_l") || a_name.starts_with("soft_r")) {
+				a_side = a_name[5] == 'l' ? kLeft : kRight;
+				rest = a_name.substr(6);
+				if (rest == "n00") {
+					a_rank = 1000;
+					return true;
+				}
+			} else if (a_name.starts_with("l_softbody") || a_name.starts_with("r_softbody")) {
+				a_side = a_name[0] == 'l' ? kLeft : kRight;
+				rest = a_name.substr(10);
+				if (rest == "nip") {
+					a_rank = 1000;
+					return true;
+				}
+			} else {
+				return false;
+			}
+			if (rest.size() < 3 || rest.size() > 4 || !digits(rest)) {
+				return false;
+			}
+			a_rank = ring(rest);
+			return true;
+		}
+
 		bool BreastBone(std::string_view a_name, std::size_t& a_side, int& a_rank)
 		{
-			std::string name = Lower(a_name);
+			const std::string name = Lower(a_name);
 			// HDT-SMP renames a bone the skeleton does not have when it attaches the
 			// mesh ("hdtSSEPhysics_AutoRename_Armor_0000001A Soft_LN00"), which is what
 			// a soft body gets on a skeleton without the soft body's own bones. The
 			// bone's name is then the last word.
-			if (const auto soft = name.rfind("soft_"); soft != std::string::npos && soft > 0 && name[soft - 1] == ' ') {
-				name.erase(0, soft);
-			}
-			if (name.size() == 9 && name.starts_with("soft_") && (name[5] == 'l' || name[5] == 'r')) {
-				a_side = name[5] == 'l' ? kLeft : kRight;
-				if (name.compare(6, 3, "n00") == 0) {
-					a_rank = 1000;
-					return true;
-				}
-				if (std::isdigit(static_cast<unsigned char>(name[6])) && std::isdigit(static_cast<unsigned char>(name[7])) &&
-					std::isdigit(static_cast<unsigned char>(name[8]))) {
-					a_rank = 100 + (name[7] - '0') * 10 + (name[8] - '0');
-					return true;
-				}
-				return false;
+			const auto space = name.rfind(' ');
+			if (SoftBone(std::string_view(name).substr(space == std::string::npos ? 0 : space + 1), a_side, a_rank)) {
+				return true;
 			}
 			if (name.find("breast") == std::string::npos || name.find("pre") != std::string::npos) {
 				return false;
@@ -290,7 +313,7 @@ namespace Lactis::Body
 		bool TorsoBone(std::string_view a_name)
 		{
 			const std::string name = Lower(a_name);
-			for (const char* part : { "breast", "soft_", "spine", "belly", "pelvis", "thigh" }) {
+			for (const char* part : { "breast", "soft_", "softbody", "spine", "belly", "pelvis", "thigh" }) {
 				if (name.find(part) != std::string::npos) {
 					return true;
 				}
@@ -926,8 +949,8 @@ namespace Lactis::Body
 					continue;
 				}
 				RE::NiAVObject* bone = nullptr;
-				for (const char* name : side == kLeft ? std::array{ "Soft_LN00", "L Breast03", "L Breast02", "L Breast01", "NPC L Breast" } :
-				                                        std::array{ "Soft_RN00", "R Breast03", "R Breast02", "R Breast01", "NPC R Breast" }) {
+				for (const char* name : side == kLeft ? std::array{ "Soft_LN00", "L_SoftBodyNip", "L Breast03", "L Breast02", "L Breast01", "NPC L Breast" } :
+				                                        std::array{ "Soft_RN00", "R_SoftBodyNip", "R Breast03", "R Breast02", "R Breast01", "NPC R Breast" }) {
 					bone = root->GetObjectByName(name);
 					if (bone) {
 						break;
