@@ -245,7 +245,14 @@ namespace Lactis::Body
 		// above any chain bone a mesh may also carry, since physics moves only the net.
 		bool BreastBone(std::string_view a_name, std::size_t& a_side, int& a_rank)
 		{
-			const std::string name = Lower(a_name);
+			std::string name = Lower(a_name);
+			// HDT-SMP renames a bone the skeleton does not have when it attaches the
+			// mesh ("hdtSSEPhysics_AutoRename_Armor_0000001A Soft_LN00"), which is what
+			// a soft body gets on a skeleton without the soft body's own bones. The
+			// bone's name is then the last word.
+			if (const auto soft = name.rfind("soft_"); soft != std::string::npos && soft > 0 && name[soft - 1] == ' ') {
+				name.erase(0, soft);
+			}
 			if (name.size() == 9 && name.starts_with("soft_") && (name[5] == 'l' || name[5] == 'r')) {
 				a_side = name[5] == 'l' ? kLeft : kRight;
 				if (name.compare(6, 3, "n00") == 0) {
@@ -461,24 +468,85 @@ namespace Lactis::Body
 		// body with one bone per breast has the whole breast at full weight, and the
 		// same rule gives its most protruding point. Clothes copied from a body carry
 		// its weights, so they answer the same way.
-		std::optional<Tip> FindTip(RE::BSGeometry* a_geometry, const Mesh& a_mesh, float a_flip, std::size_t a_side)
+		std::optional<Tip> TipOn(RE::BSGeometry* a_geometry, const Mesh& a_mesh, float a_flip, std::uint32_t a_tipBone, float& a_heaviest);
+
+		// One shape that gave no nipple, for the status line: its size, how its bones
+		// are split, and the name of a bone that looks like a breast's as the game
+		// has it (a renamed or unknown bone shows here).
+		std::string ShapeNote(RE::BSGeometry* a_geometry, const Mesh& a_mesh, const std::string& a_why)
 		{
 			auto*               skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
 			const std::uint32_t bones = skin->skinData->GetBoneCount();
-			std::uint32_t       tipBone = bones;
-			int                 best = -1;
+			std::string         sample;
+			std::uint32_t       missing = 0;
+			for (std::uint32_t i = 0; i < bones; ++i) {
+				if (!skin->bones[i]) {
+					++missing;
+					continue;
+				}
+				const std::string lower = Lower(NameOf(skin->bones[i]));
+				if (sample.empty() && (lower.find("soft_") != std::string::npos || lower.find("breast") != std::string::npos) &&
+					lower.find("pre") == std::string::npos) {
+					sample = NameOf(skin->bones[i]);
+				}
+			}
+			std::uint32_t highest = 0;
+			for (std::size_t v = 0; v < a_mesh.bones.size(); ++v) {
+				for (std::size_t j = 0; j < 4; ++j) {
+					if (a_mesh.weights[v][j] > 0.0f) {
+						highest = std::max<std::uint32_t>(highest, a_mesh.bones[v][j]);
+					}
+				}
+			}
+			auto* partition = skin->skinPartition.get();
+			return std::format("shape {}: {} vertices, {} bones ({} unbound) in {} part(s) of {} bones, highest bone index used {}, {}{}",
+				NameOf(a_geometry), a_mesh.positions.size(), bones, missing, partition ? partition->numPartitions : 0,
+				partition && partition->numPartitions ? partition->partitions[0].numBones : 0, highest, a_why,
+				sample.empty() ? std::string{} : std::format(", a bone named \"{}\"", sample));
+		}
+
+		// a_why, when nothing is found, says what the shape offered: for the status
+		// line of a body the rule does not know.
+		std::optional<Tip> FindTip(RE::BSGeometry* a_geometry, const Mesh& a_mesh, float a_flip, std::size_t a_side, std::string& a_why)
+		{
+			auto*               skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
+			const std::uint32_t bones = skin->skinData->GetBoneCount();
+			// the side's breast bones, outermost first
+			std::vector<std::pair<int, std::uint32_t>> ranked;
 			for (std::uint32_t i = 0; i < bones; ++i) {
 				const char* name = skin->bones[i] ? skin->bones[i]->name.c_str() : nullptr;
 				std::size_t side = 0;
 				int         rank = 0;
-				if (name && BreastBone(name, side, rank) && side == a_side && rank > best) {
-					best = rank;
-					tipBone = i;
+				if (name && BreastBone(name, side, rank) && side == a_side) {
+					ranked.emplace_back(rank, i);
 				}
 			}
-			if (tipBone == bones) {
+			if (ranked.empty()) {
+				a_why = "no breast bone";
 				return std::nullopt;
 			}
+			std::ranges::sort(ranked, std::greater{});
+			// The outermost bone marks the nipple. A mesh can list it and weight nothing
+			// to it (a top copied from a body, trimmed above the nipple): the next bone
+			// in then gives that mesh's most protruding point.
+			std::string tried;
+			for (const auto& [rank, bone] : ranked) {
+				float heaviest = 0.0f;
+				if (auto tip = TipOn(a_geometry, a_mesh, a_flip, bone, heaviest)) {
+					return tip;
+				}
+				if (tried.empty()) {
+					tried = std::format("{} breast bone(s), heaviest weight on {} is {:.2f}", ranked.size(), NameOf(skin->bones[bone]), heaviest);
+				}
+			}
+			a_why = tried;
+			return std::nullopt;
+		}
+
+		std::optional<Tip> TipOn(RE::BSGeometry* a_geometry, const Mesh& a_mesh, float a_flip, std::uint32_t a_tipBone, float& a_heaviest)
+		{
+			auto*               skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
+			const std::uint32_t tipBone = a_tipBone;
 			const std::size_t  count = a_mesh.positions.size();
 			std::vector<float> weight(count, 0.0f);
 			float              heaviest = 0.0f;
@@ -493,6 +561,7 @@ namespace Lactis::Body
 				}
 				heaviest = std::max(heaviest, weight[v]);
 			}
+			a_heaviest = heaviest;
 			if (heaviest < kTipWeightFloor) {
 				return std::nullopt;
 			}
@@ -747,6 +816,7 @@ namespace Lactis::Body
 			std::vector<Cover>                  covers;
 			std::size_t                         shapes = 0;
 			Mesh                                mesh;
+			std::vector<std::string>            seen;  // the shapes that gave no nipple, for the report
 			for (const auto& [object, partition] : a_torso.signature) {
 				auto* geometry = const_cast<RE::BSGeometry*>(static_cast<const RE::BSGeometry*>(object));
 				if (!ReadMesh(geometry, mesh)) {
@@ -760,12 +830,15 @@ namespace Lactis::Body
 				++shapes;
 				const bool skin = SkinShaded(geometry);
 				for (std::size_t side = 0; side < kEyes; ++side) {
-					if (auto tip = FindTip(geometry, mesh, flip, side)) {
+					std::string why;
+					if (auto tip = FindTip(geometry, mesh, flip, side, why)) {
 						tip->begin = begin;
 						tip->end = a_torso.points.size();
 						tip->geometry = geometry;
 						tip->skin = skin;
 						tips[side].push_back(std::move(*tip));
+					} else if (side == kLeft && seen.size() < 4) {
+						seen.push_back(ShapeNote(geometry, mesh, why));
 					}
 				}
 				if (!skin) {
@@ -911,6 +984,13 @@ namespace Lactis::Body
 			};
 			a_torso.report = std::format("{} torso points on {} shape(s); left nipple {}{}; right nipple {}{}", a_torso.points.size(), shapes,
 				a_torso.how[kLeft], covered(kLeft), a_torso.how[kRight], covered(kRight));
+			// A nipple that the weights did not give: say what each shape had, so a
+			// report from a body this rule does not know shows why.
+			if (tips[kLeft].empty() || tips[kRight].empty()) {
+				for (const auto& note : seen) {
+					a_torso.report += "; " + note;
+				}
+			}
 			a_torso.ok = true;
 		}
 
